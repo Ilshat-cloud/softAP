@@ -1,318 +1,235 @@
-/*  WiFi softAP Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include <string.h>
+#include <sys/param.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_mac.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
+#include "freertos/event_groups.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
-#include "driver/gpio.h"
-#include "lwip/err.h"
-#include "lwip/sys.h"
-#include "lwip/sockets.h"
-#include "freertos/queue.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_err.h"
 
+static const char *TAG = "wifi_sta";
+#define WIFI_SSID       "MEIZU 20"
+#define WIFI_PASS       ""
+#define MAXIMUM_RETRY   5
 
-/* The examples use WiFi configuration that you can set via project configuration menu.
+/* TCP client settings */
+#define SERVER_IP       "192.168.27.167"   // <-- подставь IP сервера
+// #define SERVER_HOSTNAME "myserver.local" // <-- можно вместо IP раскомментировать и использовать getaddrinfo
+#define SERVER_PORT     3333
+#define RECONNECT_DELAY_MS 5000
 
-   If you'd rather not, just change the below entries to strings with
-   the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
-*/
-#define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
-#define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
-#define EXAMPLE_ESP_WIFI_CHANNEL   CONFIG_ESP_WIFI_CHANNEL
-#define EXAMPLE_MAX_STA_CONN       CONFIG_ESP_MAX_STA_CONN
-#define PORT 3333
-#define PORT2 4444
-#if CONFIG_ESP_GTK_REKEYING_ENABLE
-#define EXAMPLE_GTK_REKEY_INTERVAL CONFIG_ESP_GTK_REKEY_INTERVAL
-#else
-#define EXAMPLE_GTK_REKEY_INTERVAL 0
-#endif
-
-static const char *TAG = "wifi softAP";
-static uint8_t control_byte=0;
-QueueHandle_t tx_queue;
+static int s_retry_num = 0;
+static EventGroupHandle_t s_wifi_event_group;
+const int WIFI_CONNECTED_BIT = BIT0;
+static void tcp_client_task(void *pvParameters);
+/* Обработчик событий WiFi / IP */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-                                    int32_t event_id, void* event_data)
+                               int32_t event_id, void* event_data)
 {
-    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
-        wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
-        ESP_LOGI(TAG, "station "MACSTR" join, AID=%d",
-                 MAC2STR(event->mac), event->aid);
-    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
-        wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
-        ESP_LOGI(TAG, "station "MACSTR" leave, AID=%d, reason=%d",
-                 MAC2STR(event->mac), event->aid, event->reason);
+    if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
+            esp_wifi_connect();
+            ESP_LOGI(TAG, "WIFI_EVENT_STA_START -> esp_wifi_connect()");
+        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            if (s_retry_num < MAXIMUM_RETRY) {
+                esp_wifi_connect();
+                s_retry_num++;
+                ESP_LOGI(TAG, "WIFI_EVENT_STA_DISCONNECTED -> reconnect attempt %d", s_retry_num);
+            } else {
+                xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+                ESP_LOGW(TAG, "WIFI_EVENT_STA_DISCONNECTED -> reached max retries");
+            }
+            wifi_event_sta_disconnected_t* ev = (wifi_event_sta_disconnected_t*) event_data;
+            ESP_LOGI(TAG, "Disconnected. Reason: %d", ((wifi_event_sta_disconnected_t*)event_data)->reason);
+        }
+    } else if (event_base == IP_EVENT) {
+        if (event_id == IP_EVENT_STA_GOT_IP) {
+            ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+            ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+            s_retry_num = 0;
+            xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        }
     }
 }
-void tcp_server_task(void *pvParameters); 
-void tcp_server_task2(void *pvParameters); 
-void handle_received_data_from_phone(const char *rx_buffer, size_t len) ;
-void wifi_init_softap(void)
+
+/* Инициализация WiFi в режиме STA и попытка подключения */
+void wifi_init_sta(void)
 {
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_ap();
+    s_wifi_event_group = xEventGroupCreate();
+
+    // Инициализация TCP/IP и NVS должна быть выполнена до
+    esp_netif_init();
+    esp_event_loop_create_default();
+
+    // создаём netif для STA
+    esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    // Регистрируем обработчики
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
                                                         ESP_EVENT_ANY_ID,
                                                         &wifi_event_handler,
                                                         NULL,
                                                         NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        NULL));
 
+    // Конфигурация STA
     wifi_config_t wifi_config = {
-        .ap = {
-            .ssid = EXAMPLE_ESP_WIFI_SSID,
-            .ssid_len = strlen(EXAMPLE_ESP_WIFI_SSID),
-            .channel = EXAMPLE_ESP_WIFI_CHANNEL,
-            .password = EXAMPLE_ESP_WIFI_PASS,
-            .max_connection = EXAMPLE_MAX_STA_CONN,
-#ifdef CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT
-            .authmode = WIFI_AUTH_WPA3_PSK,
-            .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
-#else /* CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT */
-            .authmode = WIFI_AUTH_WPA2_PSK,
-#endif
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASS,
+            .threshold.authmode = WIFI_AUTH_OPEN,
+            //.threshold.authmode = WIFI_AUTH_WPA2_PSK,     //TODO Убрать если нужен пароль
             .pmf_cfg = {
-                    .required = true,
+                .capable = true,
+                .required = false
             },
-#ifdef CONFIG_ESP_WIFI_BSS_MAX_IDLE_SUPPORT
-            .bss_max_idle_cfg = {
-                .period = WIFI_AP_DEFAULT_MAX_IDLE_PERIOD,
-                .protected_keep_alive = 1,
-            },
-#endif
-            .gtk_rekey_interval = EXAMPLE_GTK_REKEY_INTERVAL,
         },
     };
-    if (strlen(EXAMPLE_ESP_WIFI_PASS) == 0) {
-        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
-    }
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
+    ESP_LOGI(TAG, "Setting WiFi configuration SSID %s...", wifi_config.sta.ssid);
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s channel:%d",
-             EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS, EXAMPLE_ESP_WIFI_CHANNEL);
+    ESP_LOGI(TAG, "wifi_init_sta finished.");
 }
 
+/* Пример app_main, ждём подключения, затем выполняем дальнейшие действия */
 void app_main(void)
 {
-    //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
 
-    ESP_LOGI(TAG, "Example configured to blink GPIO LED!");
-    gpio_reset_pin(13);
-    gpio_reset_pin(12);
-    /* Set the GPIO as a push/pull output */
-    gpio_set_direction(13, GPIO_MODE_OUTPUT);
-    gpio_set_direction(12, GPIO_MODE_OUTPUT);
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+    wifi_init_sta();
+    // Ждём подключения (по событию) и затем стартуем TCP клиент как таск.
+    // Можно запускать сразу — в клиенте стоит waitBits.
+    xTaskCreate(tcp_client_task, "tcp_client", 4096, NULL, 5, NULL);
+    // // Ждём подключения (с тайм-аутом можно вариативно)  просто подключался с этим
+    // EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+    //                                        WIFI_CONNECTED_BIT,
+    //                                        pdFALSE,
+    //                                        pdFALSE,
+    //                                        pdMS_TO_TICKS(15000)); // ждём 15 сек
 
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
-    wifi_init_softap();
-    tx_queue = xQueueCreate(10, sizeof(uint8_t)); // очередь для байтов
-    xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
-    xTaskCreate(tcp_server_task2, "tcp_server2", 4096, NULL, 5, NULL);
+    // if (bits & WIFI_CONNECTED_BIT) {
+    //     ESP_LOGI(TAG, "Connected to AP, now can start other tasks (e.g. TCP client/server)");
+    //     // TODO: создать задачи/инициализировать клиент/сервер
+    // } else {
+    //     ESP_LOGW(TAG, "Failed to connect to SSID:%s", WIFI_SSID);
+    //     // можно пробовать повторно или fallback
+    // }
+
+    // пример: оставляем таск живым (или можно запускать своё приложение)
     while (1) {
-        switch (control_byte)
-        {
-        case '1':
-            gpio_set_level(13, true);
-            break;
-        case '2':
-            gpio_set_level(13, false);
-            break;       
-        case '3':
-            gpio_set_level(12, true);
-            break;
-        case '4':
-            gpio_set_level(12, false);
-            break;    
-        case '5':
-            //TODO добавить connected или нет
-            ESP_LOGI(TAG, "Control byte in queue: 0x%02X", control_byte);
-            xQueueSend(tx_queue, &control_byte, 10);
-            break;  
-        default:
-            
-            
-            break;
-        }
-        control_byte=0;
-        vTaskDelay(100);
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 
 
-//передает данные между двумя ESP32 3333, чтобы принять данные надо триггернуть чем нибудь отправку, отправка при получении
-void tcp_server_task(void *pvParameters)
+/* --- TCP client task --- */
+static void tcp_client_task(void *pvParameters)
 {
-    int listen_sock, client_sock;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t addr_len = sizeof(client_addr);
+    char rx_buffer[256];
+    char host_ip[64];
+    int sock = -1;
 
-    listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    if (listen_sock < 0) {
-        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
-        close(listen_sock);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    if (listen(listen_sock, 1) < 0) {
-        ESP_LOGE(TAG, "Error during listen: errno %d", errno);
-        close(listen_sock);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    ESP_LOGI(TAG, "TCP server listening on port %d", PORT);
+    // Можно использовать SERVER_HOSTNAME через getaddrinfo; здесь пока используем IP строку:
+    strncpy(host_ip, SERVER_IP, sizeof(host_ip) - 1);
+    host_ip[sizeof(host_ip)-1] = 0;
 
     while (1) {
-        client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &addr_len);
+        // Ждём подключения к WiFi (блокирующе)
+        xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+        ESP_LOGI(TAG, "TCP client: WiFi connected, trying to connect to %s:%d", host_ip, SERVER_PORT);
 
-        if (client_sock < 0) {
-            ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
-            vTaskDelay(pdMS_TO_TICKS(100));
+        struct sockaddr_in dest_addr;
+        dest_addr.sin_addr.s_addr = inet_addr(host_ip);
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_port = htons(SERVER_PORT);
+
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        if (sock < 0) {
+            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+            vTaskDelay(pdMS_TO_TICKS(RECONNECT_DELAY_MS));
             continue;
         }
-        ESP_LOGI(TAG, "Client connected");
 
-        fcntl(client_sock, F_SETFL, O_NONBLOCK);
-        int flag = 1;
-        //       setsockopt(client_sock, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+        // По желанию: таймауты подключения/приема
+        struct timeval tv;
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-        char rx_buffer[128];
-        int len;
-        uint8_t byte_to_send;
+        int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        if (err != 0) {
+            ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
+            close(sock);
+            sock = -1;
+            vTaskDelay(pdMS_TO_TICKS(RECONNECT_DELAY_MS));
+            continue;
+        }
 
+        ESP_LOGI(TAG, "Successfully connected");
+
+        // Пример: при подключении отправляем идентификацию
+        const char *hello = "ESP32 client connected\n";
+        send(sock, hello, strlen(hello), 0);
+
+        // Основной цикл обмена: читаем и отправляем данные
         while (1) {
-            // --- 1. Прием данных от клиента ---
-            len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+            // Чтение от сервера
+            int len = recv(sock, rx_buffer, sizeof(rx_buffer)-1, 0);
             if (len > 0) {
-                rx_buffer[len] = 0; // null terminate
-                ESP_LOGI(TAG, "Received: %s", rx_buffer);
-                // --- 2. Отправка данных из очереди ---
-
-                // Эхо обратно клиенту (heartbeat)
-                send(client_sock, rx_buffer, len, 0);
+                rx_buffer[len] = 0;
+                ESP_LOGI(TAG, "Received from server: %s", rx_buffer);
+                // тут можно обработать пришедшие команды
             } else if (len == 0) {
-                ESP_LOGI(TAG, "Client disconnected");
+                ESP_LOGW(TAG, "Connection closed by server");
                 break;
-            } else if (errno != EWOULDBLOCK && errno != EAGAIN){
+            } else {
+                // errno может быть EWOULDBLOCK/EAGAIN если таймаут
+                if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                    // ничего не пришло в таймаут - можно послать heartbeat
+                    const char hb[] = "HB\n";
+                    send(sock, hb, sizeof(hb)-1, 0);
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    continue;
+                }
                 ESP_LOGE(TAG, "recv failed: errno %d", errno);
                 break;
             }
 
-            while (xQueueReceive(tx_queue, &byte_to_send, 0) == pdTRUE) {
-                ESP_LOGI(TAG, "Control byte send 3333: 0x%02X", byte_to_send);
-                send(client_sock, &byte_to_send, 1, 0);
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(10)); // небольшая пауза
-        }
-        ESP_LOGI(TAG, "Client disconnected");
-        close(client_sock);
-    }
-}
-
-
-//пульт принимает данные по 4444
-void tcp_server_task2(void *pvParameters)
-{
-    int listen_sock, client_sock;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-
-    listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    if (listen_sock < 0) {
-        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT2);
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
-        close(listen_sock);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    if (listen(listen_sock, 1) < 0) {
-        ESP_LOGE(TAG, "Error during listen: errno %d", errno);
-        close(listen_sock);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    ESP_LOGI(TAG, "TCP server listening on port %d", PORT2);
-
-    while (1) {
-        client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &addr_len);
-        if (client_sock < 0) {
-            ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
-            continue;
-        }
-        ESP_LOGI(TAG, "Client connected");
-
-        char rx_buffer[128];
-        int len;
-        while ((len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0)) > 0) {
-            rx_buffer[len] = 0; // null terminate
-            ESP_LOGI(TAG, "Received: %s", rx_buffer);
-
-            handle_received_data_from_phone(rx_buffer, len);
-
-            // Эхо обратно клиенту
-            send(client_sock, rx_buffer, len, 0);
+            // Пример: ответить серверу эхо
+            const char reply[] = "ACK\n";
+            send(sock, reply, sizeof(reply)-1, 0);
         }
 
-        ESP_LOGI(TAG, "Client disconnected");
-        close(client_sock);
+        // Закрываем и переподключаемся
+        if (sock != -1) {
+            close(sock);
+            sock = -1;
+        }
+        ESP_LOGI(TAG, "Reconnecting in %d ms...", RECONNECT_DELAY_MS);
+        vTaskDelay(pdMS_TO_TICKS(RECONNECT_DELAY_MS));
     }
-}
 
-
-void handle_received_data_from_phone(const char *rx_buffer, size_t len) {
-    const char prefix[] = "Ch232";
-    size_t prefix_len = strlen(prefix);
-
-    // Проверка, что длина данных больше, чем префикс
-    if (len > prefix_len && strncmp(rx_buffer, prefix, prefix_len) == 0) {
-        // Сохраняем следующий байт после префикса в глобальную переменную
-        control_byte = (uint8_t)rx_buffer[prefix_len];
-        ESP_LOGI(TAG, "Control byte updated: 0x%02X", control_byte);
-    }
+    vTaskDelete(NULL);
 }
