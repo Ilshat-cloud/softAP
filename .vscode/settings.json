@@ -1,0 +1,25 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.espIdfPathWin": "c:\\ESP32\\v5.5.1\\esp-idf",
+  "idf.toolsPathWin": "C:\\Users\\user\\.espressif",
+  "idf.pythonInstallPath": "C:\\Users\\user\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+  "idf.flashType": "JTAG",
+  "idf.portWin": "COM3",
+  "idf.monitorPort": "COM3",
+  "idf.openOcdConfigs": [
+    "board/esp32c3-builtin.cfg"
+  ],
+  "files.associations": {
+    "task.h": "c",
+    "gpio.h": "c"
+  },
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32c3"
+  },
+  "clangd.path": "C:\\Users\\user\\.espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=C:\\Users\\user\\.espressif\\tools\\riscv32-esp-elf\\esp-14.2.0_20241119\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
+    "--compile-commands-dir=c:\\Users\\user\\OneDrive\\documents\\esp32\\WIFI_AP\\softAP\\build"
+  ]
+}
