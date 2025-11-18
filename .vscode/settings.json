@@ -11,7 +11,9 @@
   ],
   "files.associations": {
     "task.h": "c",
-    "gpio.h": "c"
+    "gpio.h": "c",
+    "*.inc": "c",
+    "thread": "c"
   },
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c3"

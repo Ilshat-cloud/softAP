@@ -39,7 +39,10 @@
 #endif
 
 static const char *TAG = "wifi softAP";
-static uint8_t control_byte=0;
+static uint8_t control_byte=0, PWM_setpoint=0;      //PWM для сидух 0-255
+static int8_t client_status=0;                     //Status для воторого ESP
+static int8_t server_status=0;                     //Status для wifi AP
+static uint8_t gpioX_state[11] = {0};  // индексы 1..10 для GPIO 1..10  ебаный костыль, т.к. чтение состояния ноги не работает
 QueueHandle_t tx_queue;
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
@@ -56,6 +59,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 }
 void tcp_server_task(void *pvParameters); 
 void tcp_server_task2(void *pvParameters); 
+void PWM_task(void *pvParameters); 
 void handle_received_data_from_phone(const char *rx_buffer, size_t len) ;
 void wifi_init_softap(void)
 {
@@ -122,46 +126,179 @@ void app_main(void)
     ESP_LOGI(TAG, "Example configured to blink GPIO LED!");
     gpio_reset_pin(13);
     gpio_reset_pin(12);
+
+    gpio_reset_pin(0);
+    gpio_reset_pin(1);
+    gpio_reset_pin(2);
+    gpio_reset_pin(3);
+    gpio_reset_pin(4);
+    gpio_reset_pin(5);
+    gpio_reset_pin(6);
+    gpio_reset_pin(7);    
+    gpio_reset_pin(8);
+    gpio_reset_pin(9);
+    gpio_reset_pin(10);    
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(13, GPIO_MODE_OUTPUT);
     gpio_set_direction(12, GPIO_MODE_OUTPUT);
-
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
+    gpio_set_direction(0, GPIO_MODE_OUTPUT);
+    gpio_set_direction(1, GPIO_MODE_OUTPUT);
+    gpio_set_direction(2, GPIO_MODE_OUTPUT);
+    gpio_set_direction(3, GPIO_MODE_OUTPUT);
+    gpio_set_direction(4, GPIO_MODE_OUTPUT);
+    gpio_set_direction(5, GPIO_MODE_OUTPUT);    
+    gpio_set_direction(6, GPIO_MODE_OUTPUT);
+    gpio_set_direction(7, GPIO_MODE_OUTPUT);
+    gpio_set_direction(8, GPIO_MODE_OUTPUT);
+    gpio_set_direction(9, GPIO_MODE_OUTPUT); 
+    gpio_set_direction(10, GPIO_MODE_OUTPUT); 
+    memset(&gpioX_state[1],0,10);
+    gpio_set_level(1, gpioX_state[1]);
+    gpio_set_level(2, gpioX_state[2]);
+    gpio_set_level(3, gpioX_state[3]);
+    gpio_set_level(4, gpioX_state[4]);
+    gpio_set_level(5, gpioX_state[5]);
+    gpio_set_level(6, gpioX_state[6]);
+    gpio_set_level(7, gpioX_state[7]);
+    gpio_set_level(8, gpioX_state[8]);
+    gpio_set_level(9, gpioX_state[9]);
+    gpio_set_level(10, gpioX_state[10]);
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");   
     wifi_init_softap();
     tx_queue = xQueueCreate(10, sizeof(uint8_t)); // очередь для байтов
     xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
     xTaskCreate(tcp_server_task2, "tcp_server2", 4096, NULL, 5, NULL);
+    xTaskCreate(PWM_task, "pwm", 4096, NULL, 4, NULL);
     while (1) {
-        switch (control_byte)
-        {
+        switch (control_byte){
+        case 0:
+            break;
         case '1':
             gpio_set_level(13, true);
             break;
+
         case '2':
             gpio_set_level(13, false);
-            break;       
+            break;
+
         case '3':
+            gpioX_state[12] = 1;
             gpio_set_level(12, true);
             break;
+
         case '4':
             gpio_set_level(12, false);
-            break;    
-        case '5':
-            //TODO добавить connected или нет
-            ESP_LOGI(TAG, "Control byte in queue: 0x%02X", control_byte);
-            xQueueSend(tx_queue, &control_byte, 10);
+            break;
+
+        case 'A': // GPIO1 toggle
+            gpioX_state[1] = !gpioX_state[1];
+            gpio_set_level(1, gpioX_state[1]);
+            ESP_LOGI(TAG, "GPIO 1 A toggle %d", gpioX_state[1]);
+            break;
+
+        case 'B': // GPIO2 toggle
+            gpioX_state[2] = !gpioX_state[2];
+            gpio_set_level(2, gpioX_state[2]);
+            ESP_LOGI(TAG, "GPIO 2 B toggle %d", gpioX_state[2]);
+            break;
+
+        case 'C': // GPIO3 toggle
+            gpioX_state[3] = !gpioX_state[3];
+            gpio_set_level(3, gpioX_state[3]);
+            ESP_LOGI(TAG, "GPIO 3 C toggle %d", gpioX_state[3]);
+            break;
+
+        case 'D': // GPIO4 toggle
+            gpioX_state[4] = !gpioX_state[4];
+            gpio_set_level(4, gpioX_state[4]);
+            ESP_LOGI(TAG, "GPIO 4 D toggle %d", gpioX_state[4]);
+            break;
+
+        case 'E': // GPIO5 toggle
+            gpioX_state[5] = !gpioX_state[5];
+            gpio_set_level(5, gpioX_state[5]);
+            ESP_LOGI(TAG, "GPIO 5 E toggle %d", gpioX_state[5]);
+            break;
+
+        case 'F': // GPIO6 toggle
+            gpioX_state[6] = !gpioX_state[6];
+            gpio_set_level(6, gpioX_state[6]);
+            break;
+
+        case 'G': // GPIO7 toggle
+            gpioX_state[7] = !gpioX_state[7];
+            gpio_set_level(7, gpioX_state[7]);
+            break;
+
+        case 'H': // GPIO8 toggle
+            gpioX_state[8] = !gpioX_state[8];
+            gpio_set_level(8, gpioX_state[8]);
+            break;
+
+        case 'I': // GPIO9 toggle
+            gpioX_state[9] = !gpioX_state[9];
+            gpio_set_level(9, gpioX_state[9]);
+            break;
+
+        case 'J': // GPIO10 toggle
+            gpioX_state[10] = !gpioX_state[10];
+            gpio_set_level(10, gpioX_state[10]);
+            break;
+        case 'K':
+                PWM_setpoint=0;
+            break;  
+        case 'L':
+                PWM_setpoint=85;
+            break;  
+        case 'M':
+                PWM_setpoint=170;
+            break;  
+        case 'N':
+                PWM_setpoint=255;
             break;  
         default:
-            
-            
+            ESP_LOGI(TAG, "Control byte in queue: 0x%02X", control_byte);
+            xQueueSend(tx_queue, &control_byte, 10);
             break;
         }
         control_byte=0;
+        if(client_status<=-2){
+            if (xTaskGetHandle("tcp_server") == NULL)
+                {
+                    xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
+                    client_status=0;
+                }
+            
+        }else if ((server_status!=1)&&(client_status==1)){
+            control_byte='x';
+        }
+        if(server_status<=-2){
+            if (xTaskGetHandle("tcp_server2") == NULL)
+                {
+                    xTaskCreate(tcp_server_task2, "tcp_server2", 4096, NULL, 5, NULL);
+                    server_status=0;
+                }
+            
+        }else if (server_status!=1){
+            memset(&gpioX_state[1],0,10);
+            gpio_set_level(1, gpioX_state[1]);
+            gpio_set_level(2, gpioX_state[2]);
+            gpio_set_level(3, gpioX_state[3]);
+            gpio_set_level(4, gpioX_state[4]);
+            gpio_set_level(5, gpioX_state[5]);
+            gpio_set_level(6, gpioX_state[6]);
+            gpio_set_level(7, gpioX_state[7]);
+            gpio_set_level(8, gpioX_state[8]);
+            gpio_set_level(9, gpioX_state[9]);
+            gpio_set_level(10, gpioX_state[10]);
+        }
+
         vTaskDelay(100);
     }
+    
 }
 
-
+//AP to slave
 //передает данные между двумя ESP32 3333, чтобы принять данные надо триггернуть чем нибудь отправку, отправка при получении
 void tcp_server_task(void *pvParameters)
 {
@@ -172,6 +309,7 @@ void tcp_server_task(void *pvParameters)
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     if (listen_sock < 0) {
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        client_status=-2;
         vTaskDelete(NULL);
         return;
     }
@@ -179,10 +317,13 @@ void tcp_server_task(void *pvParameters)
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    int opt = 1;
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
         close(listen_sock);
+        client_status=-3;
         vTaskDelete(NULL);
         return;
     }
@@ -190,6 +331,7 @@ void tcp_server_task(void *pvParameters)
     if (listen(listen_sock, 1) < 0) {
         ESP_LOGE(TAG, "Error during listen: errno %d", errno);
         close(listen_sock);
+        client_status=-4;
         vTaskDelete(NULL);
         return;
     }
@@ -204,16 +346,19 @@ void tcp_server_task(void *pvParameters)
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        client_status=1;
         ESP_LOGI(TAG, "Client connected");
 
         fcntl(client_sock, F_SETFL, O_NONBLOCK);
-        int flag = 1;
-        //       setsockopt(client_sock, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+
 
         char rx_buffer[128];
         int len;
         uint8_t byte_to_send;
-
+        struct timeval timeout;
+        timeout.tv_sec = 50;
+        timeout.tv_usec = 0;
+        setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         while (1) {
             // --- 1. Прием данных от клиента ---
             len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
@@ -221,13 +366,15 @@ void tcp_server_task(void *pvParameters)
                 rx_buffer[len] = 0; // null terminate
                 ESP_LOGI(TAG, "Received: %s", rx_buffer);
                 // --- 2. Отправка данных из очереди ---
-
+                client_status=1;
                 // Эхо обратно клиенту (heartbeat)
                 send(client_sock, rx_buffer, len, 0);
             } else if (len == 0) {
+                client_status=-1;
                 ESP_LOGI(TAG, "Client disconnected");
                 break;
             } else if (errno != EWOULDBLOCK && errno != EAGAIN){
+                client_status=-1;
                 ESP_LOGE(TAG, "recv failed: errno %d", errno);
                 break;
             }
@@ -244,17 +391,18 @@ void tcp_server_task(void *pvParameters)
     }
 }
 
-
+//PC to AP
 //пульт принимает данные по 4444
 void tcp_server_task2(void *pvParameters)
 {
     int listen_sock, client_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
-
+    uint8_t status_loop=0;
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     if (listen_sock < 0) {
         ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        server_status=-2;
         vTaskDelete(NULL);
         return;
     }
@@ -262,10 +410,13 @@ void tcp_server_task2(void *pvParameters)
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(PORT2);
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    int opt = 1;
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
         close(listen_sock);
+        server_status=-3;
         vTaskDelete(NULL);
         return;
     }
@@ -273,6 +424,7 @@ void tcp_server_task2(void *pvParameters)
     if (listen(listen_sock, 1) < 0) {
         ESP_LOGE(TAG, "Error during listen: errno %d", errno);
         close(listen_sock);
+        server_status=-4;
         vTaskDelete(NULL);
         return;
     }
@@ -283,12 +435,18 @@ void tcp_server_task2(void *pvParameters)
         client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &addr_len);
         if (client_sock < 0) {
             ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
+            server_status=-1;
             continue;
         }
+        status_loop++;
         ESP_LOGI(TAG, "Client connected");
-
+        server_status=1;
         char rx_buffer[128];
         int len;
+        struct timeval timeout;
+        timeout.tv_sec = 60;
+        timeout.tv_usec = 0;
+        setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         while ((len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0)) > 0) {
             rx_buffer[len] = 0; // null terminate
             ESP_LOGI(TAG, "Received: %s", rx_buffer);
@@ -297,8 +455,12 @@ void tcp_server_task2(void *pvParameters)
 
             // Эхо обратно клиенту
             send(client_sock, rx_buffer, len, 0);
+            sprintf(rx_buffer,"Slave status: %d\r\n",client_status);
+            send(client_sock, rx_buffer, strlen(rx_buffer), 0);   
+            
         }
-
+        vTaskDelay(pdMS_TO_TICKS(10));
+        server_status=0;
         ESP_LOGI(TAG, "Client disconnected");
         close(client_sock);
     }
@@ -314,5 +476,19 @@ void handle_received_data_from_phone(const char *rx_buffer, size_t len) {
         // Сохраняем следующий байт после префикса в глобальную переменную
         control_byte = (uint8_t)rx_buffer[prefix_len];
         ESP_LOGI(TAG, "Control byte updated: 0x%02X", control_byte);
+    }
+}
+
+
+void PWM_task(void *pvParameters){
+    uint8_t loop=0;
+    while(1){
+        if(loop>PWM_setpoint){
+            gpio_set_level(0, true);
+        }else{
+            gpio_set_level(0, false);
+        }    
+        loop++;
+        vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
