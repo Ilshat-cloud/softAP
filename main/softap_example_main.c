@@ -11,22 +11,28 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_err.h"
+#include "driver/gpio.h"
 
 static const char *TAG = "wifi_sta";
-#define WIFI_SSID       "MEIZU 20"
+#define WIFI_SSID       "ESP32"
 #define WIFI_PASS       ""
 #define MAXIMUM_RETRY   5
 
 /* TCP client settings */
-#define SERVER_IP       "192.168.27.167"   // <-- подставь IP сервера
+#define SERVER_IP       "192.168.4.1"   // <-- подставь IP сервера
 // #define SERVER_HOSTNAME "myserver.local" // <-- можно вместо IP раскомментировать и использовать getaddrinfo
 #define SERVER_PORT     3333
 #define RECONNECT_DELAY_MS 5000
 
+static int8_t client_status=0;                     //Status для воторого ESP
+static int8_t server_status=0;                     //Status для wifi AP
+static uint8_t gpioX_state[11] = {0};  // индексы 1..10 для GPIO 1..10  ебаный костыль, т.к. чтение состояния ноги не работает
+static uint8_t control_byte=0, PWM_setpoint=0;      //PWM для сидух 0-255
 static int s_retry_num = 0;
 static EventGroupHandle_t s_wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 static void tcp_client_task(void *pvParameters);
+void PWM_task(void *pvParameters); 
 /* Обработчик событий WiFi / IP */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data)
@@ -115,7 +121,42 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
+    gpio_reset_pin(0);
+    gpio_reset_pin(1);
+    gpio_reset_pin(2);
+    gpio_reset_pin(3);
+    gpio_reset_pin(4);
+    gpio_reset_pin(5);
+    gpio_reset_pin(6);
+    gpio_reset_pin(7);    
+    gpio_reset_pin(8);
+    gpio_reset_pin(9);
+    gpio_reset_pin(10);    
+    /* Set the GPIO as a push/pull output */
+    gpio_set_direction(13, GPIO_MODE_OUTPUT);
+    gpio_set_direction(12, GPIO_MODE_OUTPUT);
+    gpio_set_direction(0, GPIO_MODE_OUTPUT);
+    gpio_set_direction(1, GPIO_MODE_OUTPUT);
+    gpio_set_direction(2, GPIO_MODE_OUTPUT);
+    gpio_set_direction(3, GPIO_MODE_OUTPUT);
+    gpio_set_direction(4, GPIO_MODE_OUTPUT);
+    gpio_set_direction(5, GPIO_MODE_OUTPUT);    
+    gpio_set_direction(6, GPIO_MODE_OUTPUT);
+    gpio_set_direction(7, GPIO_MODE_OUTPUT);
+    gpio_set_direction(8, GPIO_MODE_OUTPUT);
+    gpio_set_direction(9, GPIO_MODE_OUTPUT); 
+    gpio_set_direction(10, GPIO_MODE_OUTPUT); 
+    memset(&gpioX_state[1],0,10);
+    gpio_set_level(1, gpioX_state[1]);
+    gpio_set_level(2, gpioX_state[2]);
+    gpio_set_level(3, gpioX_state[3]);
+    gpio_set_level(4, gpioX_state[4]);
+    gpio_set_level(5, gpioX_state[5]);
+    gpio_set_level(6, gpioX_state[6]);
+    gpio_set_level(7, gpioX_state[7]);
+    gpio_set_level(8, gpioX_state[8]);
+    gpio_set_level(9, gpioX_state[9]);
+    gpio_set_level(10, gpioX_state[10]);
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
     // Ждём подключения (по событию) и затем стартуем TCP клиент как таск.
@@ -177,7 +218,7 @@ static void tcp_client_task(void *pvParameters)
         tv.tv_usec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
+        control_byte='x';
         int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
         if (err != 0) {
             ESP_LOGE(TAG, "Socket unable to connect: errno %d", errno);
@@ -196,11 +237,13 @@ static void tcp_client_task(void *pvParameters)
         // Основной цикл обмена: читаем и отправляем данные
         while (1) {
             // Чтение от сервера
+            send(sock, "\r", 1, 0);
             int len = recv(sock, rx_buffer, sizeof(rx_buffer)-1, 0);
             if (len > 0) {
                 rx_buffer[len] = 0;
                 ESP_LOGI(TAG, "Received from server: %s", rx_buffer);
-                // тут можно обработать пришедшие команды
+                control_byte=rx_buffer[len-1];                // тут беерм последний байт который пришел, ответ приходит сразу как закинем запрос
+                
             } else if (len == 0) {
                 ESP_LOGW(TAG, "Connection closed by server");
                 break;
@@ -210,18 +253,16 @@ static void tcp_client_task(void *pvParameters)
                     // ничего не пришло в таймаут - можно послать heartbeat
                     const char hb[] = "HB\n";
                     send(sock, hb, sizeof(hb)-1, 0);
-                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    vTaskDelay(pdMS_TO_TICKS(100));
                     continue;
                 }
                 ESP_LOGE(TAG, "recv failed: errno %d", errno);
                 break;
+                vTaskDelay(pdMS_TO_TICKS(100));
             }
-
-            // Пример: ответить серверу эхо
-            const char reply[] = "ACK\n";
-            send(sock, reply, sizeof(reply)-1, 0);
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
-
+        control_byte='x';
         // Закрываем и переподключаемся
         if (sock != -1) {
             close(sock);
@@ -232,4 +273,106 @@ static void tcp_client_task(void *pvParameters)
     }
 
     vTaskDelete(NULL);
+}
+
+
+void PWM_task(void *pvParameters){
+    uint8_t loop=0;
+
+    while(1){
+        switch (control_byte){
+        case 'a': // GPIO1 toggle
+            gpioX_state[1] = !gpioX_state[1];
+            gpio_set_level(1, gpioX_state[1]);
+            ESP_LOGI(TAG, "GPIO 1 A toggle %d", gpioX_state[1]);
+            break;
+
+        case 'b': // GPIO2 toggle
+            gpioX_state[2] = !gpioX_state[2];
+            gpio_set_level(2, gpioX_state[2]);
+            ESP_LOGI(TAG, "GPIO 2 B toggle %d", gpioX_state[2]);
+            break;
+
+        case 'c': // GPIO3 toggle
+            gpioX_state[3] = !gpioX_state[3];
+            gpio_set_level(3, gpioX_state[3]);
+            ESP_LOGI(TAG, "GPIO 3 C toggle %d", gpioX_state[3]);
+            break;
+
+        case 'd': // GPIO4 toggle
+            gpioX_state[4] = !gpioX_state[4];
+            gpio_set_level(4, gpioX_state[4]);
+            ESP_LOGI(TAG, "GPIO 4 D toggle %d", gpioX_state[4]);
+            break;
+
+        case 'e': // GPIO5 toggle
+            gpioX_state[5] = !gpioX_state[5];
+            gpio_set_level(5, gpioX_state[5]);
+            ESP_LOGI(TAG, "GPIO 5 E toggle %d", gpioX_state[5]);
+            break;
+
+        case 'f': // GPIO6 toggle
+            gpioX_state[6] = !gpioX_state[6];
+            gpio_set_level(6, gpioX_state[6]);
+            break;
+
+        case 'g': // GPIO7 toggle
+            gpioX_state[7] = !gpioX_state[7];
+            gpio_set_level(7, gpioX_state[7]);
+            break;
+
+        case 'h': // GPIO8 toggle
+            gpioX_state[8] = !gpioX_state[8];
+            gpio_set_level(8, gpioX_state[8]);
+            break;
+
+        case 'i': // GPIO9 toggle
+            gpioX_state[9] = !gpioX_state[9];
+            gpio_set_level(9, gpioX_state[9]);
+            break;
+
+        case 'j': // GPIO10 toggle
+            gpioX_state[10] = !gpioX_state[10];
+            gpio_set_level(10, gpioX_state[10]);
+            break;
+        case 'k':
+                PWM_setpoint=0;
+            break;  
+        case 'l':
+                PWM_setpoint=85;
+            break;  
+        case 'm':
+                PWM_setpoint=170;
+            break;  
+        case 'n':
+                PWM_setpoint=255;
+            break;  
+        case 'x':
+            memset(&gpioX_state[1],0,10);
+            gpio_set_level(1, gpioX_state[1]);
+            gpio_set_level(2, gpioX_state[2]);
+            gpio_set_level(3, gpioX_state[3]);
+            gpio_set_level(4, gpioX_state[4]);
+            gpio_set_level(5, gpioX_state[5]);
+            gpio_set_level(6, gpioX_state[6]);
+            gpio_set_level(7, gpioX_state[7]);
+            gpio_set_level(8, gpioX_state[8]);
+            gpio_set_level(9, gpioX_state[9]);
+            gpio_set_level(10, gpioX_state[10]);  
+            break;             
+        default:
+
+            break;
+        }
+        control_byte=0;
+
+
+        if(loop>PWM_setpoint){
+            gpio_set_level(0, true);
+        }else{
+            gpio_set_level(0, false);
+        }    
+        loop++;
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
 }
