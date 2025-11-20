@@ -137,7 +137,8 @@ void app_main(void)
     gpio_reset_pin(7);    
     gpio_reset_pin(8);
     gpio_reset_pin(9);
-    gpio_reset_pin(10);    
+    gpio_reset_pin(10);  
+    gpio_reset_pin(11);  
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(13, GPIO_MODE_OUTPUT);
     gpio_set_direction(12, GPIO_MODE_OUTPUT);
@@ -152,6 +153,7 @@ void app_main(void)
     gpio_set_direction(8, GPIO_MODE_OUTPUT);
     gpio_set_direction(9, GPIO_MODE_OUTPUT); 
     gpio_set_direction(10, GPIO_MODE_OUTPUT); 
+    gpio_set_direction(11, GPIO_MODE_INPUT); 
     memset(&gpioX_state[1],0,10);
     gpio_set_level(1, gpioX_state[1]);
     gpio_set_level(2, gpioX_state[2]);
@@ -173,23 +175,6 @@ void app_main(void)
         switch (control_byte){
         case 0:
             break;
-        case '1':
-            gpio_set_level(13, true);
-            break;
-
-        case '2':
-            gpio_set_level(13, false);
-            break;
-
-        case '3':
-            gpioX_state[12] = 1;
-            gpio_set_level(12, true);
-            break;
-
-        case '4':
-            gpio_set_level(12, false);
-            break;
-
         case 'A': // GPIO1 toggle
             gpioX_state[1] = !gpioX_state[1];
             gpio_set_level(1, gpioX_state[1]);
@@ -292,7 +277,16 @@ void app_main(void)
             gpio_set_level(9, gpioX_state[9]);
             gpio_set_level(10, gpioX_state[10]);
         }
-
+        if (client_status==1){
+            gpio_set_level(13, true);
+        }else{
+            gpio_set_level(13, false);
+        }
+        if (server_status==1){
+            gpio_set_level(12, true);
+        }else{
+            gpio_set_level(12, false);
+        }
         vTaskDelay(100);
     }
     
@@ -455,9 +449,19 @@ void tcp_server_task2(void *pvParameters)
 
             // Эхо обратно клиенту
             send(client_sock, rx_buffer, len, 0);
-            sprintf(rx_buffer,"Slave status: %d\r\n",client_status);
-            send(client_sock, rx_buffer, strlen(rx_buffer), 0);   
-            
+            sprintf(rx_buffer,"Slave status: %d, GPIO_IN: %d\r\n",client_status,gpio_get_level(11));
+            send(client_sock, rx_buffer, strlen(rx_buffer), 0); 
+            sprintf(rx_buffer,"Active outputs: ");
+            uint8_t len = strlen(rx_buffer);  
+            for (uint8_t i =0; i<11;i++){
+                if (gpioX_state[i]){
+                    rx_buffer[len++] = 'A' + i;
+                }
+            }
+            rx_buffer[len++] = '\r';
+            rx_buffer[len++] = '\n';
+            rx_buffer[len]   = '\0';
+            send(client_sock, rx_buffer, strlen(rx_buffer), 0); 
         }
         vTaskDelay(pdMS_TO_TICKS(10));
         server_status=0;
@@ -481,14 +485,21 @@ void handle_received_data_from_phone(const char *rx_buffer, size_t len) {
 
 
 void PWM_task(void *pvParameters){
-    uint8_t loop=0;
+    uint8_t loop=0,gpio_perv_state=0;
     while(1){
+        if(gpio_get_level(11)){
+            PWM_setpoint=255;
+            gpio_perv_state=1;
+        }else if (gpio_perv_state){
+            PWM_setpoint=0;
+            gpio_perv_state=0;
+        }
         if(loop>PWM_setpoint){
-            gpio_set_level(0, true);
-        }else{
             gpio_set_level(0, false);
+        }else{
+            gpio_set_level(0, true);
         }    
         loop++;
-        vTaskDelay(pdMS_TO_TICKS(2));
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
