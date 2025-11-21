@@ -455,7 +455,7 @@ void tcp_server_task2(void *pvParameters)
             uint8_t len = strlen(rx_buffer);  
             for (uint8_t i =0; i<11;i++){
                 if (gpioX_state[i]){
-                    rx_buffer[len++] = 'A' + i;
+                    rx_buffer[len++] = 'A' + i-1;
                 }
             }
             rx_buffer[len++] = '\r';
