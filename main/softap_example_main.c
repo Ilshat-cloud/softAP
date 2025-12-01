@@ -26,7 +26,7 @@ static const char *TAG = "wifi_sta";
 
 static int8_t client_status=0;                     //Status для воторого ESP
 static int8_t server_status=0;                     //Status для wifi AP
-static uint8_t gpioX_state[11] = {0};  // индексы 1..10 для GPIO 1..10  ебаный костыль, т.к. чтение состояния ноги не работает
+static uint8_t gpioX_state[13] = {0};  // индексы 1..10 для GPIO 1..10  ебаный костыль, т.к. чтение состояния ноги не работает
 static uint8_t control_byte=0, PWM_setpoint=0;      //PWM для сидух 0-255
 static int s_retry_num = 0;
 static EventGroupHandle_t s_wifi_event_group;
@@ -132,6 +132,7 @@ void app_main(void)
     gpio_reset_pin(8);
     gpio_reset_pin(9);
     gpio_reset_pin(10);    
+    gpio_reset_pin(12);    
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(13, GPIO_MODE_OUTPUT);
     gpio_set_direction(12, GPIO_MODE_OUTPUT);
@@ -146,7 +147,8 @@ void app_main(void)
     gpio_set_direction(8, GPIO_MODE_OUTPUT);
     gpio_set_direction(9, GPIO_MODE_OUTPUT); 
     gpio_set_direction(10, GPIO_MODE_OUTPUT); 
-    memset(&gpioX_state[1],0,10);
+    gpio_set_direction(12, GPIO_MODE_OUTPUT); 
+    memset(&gpioX_state[1],0,12);
     gpio_set_level(1, gpioX_state[1]);
     gpio_set_level(2, gpioX_state[2]);
     gpio_set_level(3, gpioX_state[3]);
@@ -157,6 +159,7 @@ void app_main(void)
     gpio_set_level(8, gpioX_state[8]);
     gpio_set_level(9, gpioX_state[9]);
     gpio_set_level(10, gpioX_state[10]);
+    gpio_set_level(12, gpioX_state[12]);
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
     // Ждём подключения (по событию) и затем стартуем TCP клиент как таск.
@@ -347,6 +350,10 @@ void PWM_task(void *pvParameters){
         case 'n':
                 PWM_setpoint=255;
             break;  
+        case 'o': // GPIO10 toggle
+            gpioX_state[12] = !gpioX_state[12];
+            gpio_set_level(12, gpioX_state[12]);
+            break;
         case 'x':
             memset(&gpioX_state[1],0,10);
             gpio_set_level(1, gpioX_state[1]);
@@ -359,6 +366,7 @@ void PWM_task(void *pvParameters){
             gpio_set_level(8, gpioX_state[8]);
             gpio_set_level(9, gpioX_state[9]);
             gpio_set_level(10, gpioX_state[10]);  
+            gpio_set_level(12, gpioX_state[12]);  
             break;             
         default:
 
