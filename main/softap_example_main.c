@@ -16,7 +16,7 @@
 static const char *TAG = "wifi_sta";
 #define WIFI_SSID       CONFIG_ESP_WIFI_SSID
 #define WIFI_PASS       ""
-#define MAXIMUM_RETRY   5
+#define MAXIMUM_RETRY   5000
 
 /* TCP client settings */
 #define SERVER_IP       "192.168.4.1"   // <-- подставь IP сервера
@@ -52,6 +52,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             }
             wifi_event_sta_disconnected_t* ev = (wifi_event_sta_disconnected_t*) event_data;
             ESP_LOGI(TAG, "Disconnected. Reason: %d", ((wifi_event_sta_disconnected_t*)event_data)->reason);
+            server_status=0;
         }
     } else if (event_base == IP_EVENT) {
         if (event_id == IP_EVENT_STA_GOT_IP) {
@@ -192,6 +193,7 @@ void app_main(void)
 static void tcp_client_task(void *pvParameters)
 {
     char rx_buffer[256];
+    char tx_buffer[64];
     char host_ip[64];
     int sock = -1;
 
@@ -218,7 +220,7 @@ static void tcp_client_task(void *pvParameters)
 
         // По желанию: таймауты подключения/приема
         struct timeval tv;
-        tv.tv_sec = 5;
+        tv.tv_sec = 20;
         tv.tv_usec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -233,7 +235,7 @@ static void tcp_client_task(void *pvParameters)
         }
 
         ESP_LOGI(TAG, "Successfully connected");
-
+        server_status=1;
         // Пример: при подключении отправляем идентификацию
         const char *hello = "ESP32 client connected\n";
         send(sock, hello, strlen(hello), 0);
@@ -241,7 +243,18 @@ static void tcp_client_task(void *pvParameters)
         // Основной цикл обмена: читаем и отправляем данные
         while (1) {
             // Чтение от сервера
-            send(sock, "\r", 1, 0);
+            sprintf(tx_buffer,"Active outputs: ");
+            uint8_t len2 = strlen(tx_buffer);  
+            for (uint8_t i =0; i<sizeof(gpioX_state);i++){
+                if (gpioX_state[i]){
+                    tx_buffer[len2++] = 'a' + i-1;
+                }
+            }
+            tx_buffer[len2++] = '\r';
+            tx_buffer[len2++] = '\n';
+            tx_buffer[len2]   = '\0';
+            send(sock, tx_buffer, strlen(tx_buffer), 0); 
+
             int len = recv(sock, rx_buffer, sizeof(rx_buffer)-1, 0);
             if (len > 0) {
                 rx_buffer[len] = 0;
@@ -269,6 +282,7 @@ static void tcp_client_task(void *pvParameters)
         control_byte='x';
         // Закрываем и переподключаемся
         if (sock != -1) {
+            server_status=0;
             close(sock);
             sock = -1;
         }
@@ -282,7 +296,7 @@ static void tcp_client_task(void *pvParameters)
 
 void PWM_task(void *pvParameters){
     uint8_t loop=0;
-
+    int8_t gpio_perv_state=0;
     while(1){
         switch (control_byte){
         case 'a': // GPIO1 toggle
@@ -342,7 +356,7 @@ void PWM_task(void *pvParameters){
         case 'k':
                 PWM_setpoint=0;
             break;  
-        case 'l':
+        case 'o':
                 PWM_setpoint=85;
             break;  
         case 'm':
@@ -351,7 +365,7 @@ void PWM_task(void *pvParameters){
         case 'n':
                 PWM_setpoint=255;
             break;  
-        case 'o': // GPIO10 toggle
+        case 'l': // GPIO10 toggle
             gpioX_state[12] = !gpioX_state[12];
             gpio_set_level(12, gpioX_state[12]);
             break;
@@ -375,13 +389,25 @@ void PWM_task(void *pvParameters){
         }
         control_byte=0;
 
-
-        if(loop>PWM_setpoint){
-            gpio_set_level(0, true);
+        if(server_status){
+            gpio_set_level(13, true);  
         }else{
+            gpio_set_level(13, false);  
+        }
+
+        if(gpio_get_level(11)){
+            PWM_setpoint=255;
+            gpio_perv_state=1;
+        }else if (gpio_perv_state){
+            PWM_setpoint=0;
+            gpio_perv_state=0;
+        }
+        if(loop>PWM_setpoint){
             gpio_set_level(0, false);
+        }else{
+            gpio_set_level(0, true);
         }    
         loop++;
-        vTaskDelay(pdMS_TO_TICKS(2));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
