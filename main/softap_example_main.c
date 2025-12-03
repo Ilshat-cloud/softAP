@@ -42,7 +42,7 @@ static const char *TAG = "wifi softAP";
 static uint8_t control_byte=0, PWM_setpoint=0;      //PWM для сидух 0-255
 static int8_t client_status=0;                     //Status для воторого ESP
 static int8_t server_status=0;                     //Status для wifi AP
-static uint8_t gpioX_state[11] = {0};  // индексы 1..10 для GPIO 1..10  ебаный костыль, т.к. чтение состояния ноги не работает
+static uint8_t gpioX_state[14] = {0};  // индексы 1..10 для GPIO 1..10  ебаный костыль, т.к. чтение состояния ноги не работает
 QueueHandle_t tx_queue;
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
@@ -141,7 +141,7 @@ void app_main(void)
     gpio_reset_pin(11);  
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(13, GPIO_MODE_OUTPUT);
-    gpio_set_direction(12, GPIO_MODE_OUTPUT);
+    gpio_set_direction(12, GPIO_MODE_OUTPUT);  //светодиод и выход 
     gpio_set_direction(0, GPIO_MODE_OUTPUT);
     gpio_set_direction(1, GPIO_MODE_OUTPUT);
     gpio_set_direction(2, GPIO_MODE_OUTPUT);
@@ -165,6 +165,7 @@ void app_main(void)
     gpio_set_level(8, gpioX_state[8]);
     gpio_set_level(9, gpioX_state[9]);
     gpio_set_level(10, gpioX_state[10]);
+    gpio_set_level(12, gpioX_state[12]);
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");   
     wifi_init_softap();
     tx_queue = xQueueCreate(10, sizeof(uint8_t)); // очередь для байтов
@@ -241,6 +242,10 @@ void app_main(void)
         case 'N':
                 PWM_setpoint=255;
             break;  
+        case 'O': // GPIO10 toggle
+            gpioX_state[12] = !gpioX_state[12];
+            gpio_set_level(12, gpioX_state[12]);
+            break;
         default:
             ESP_LOGI(TAG, "Control byte in queue: 0x%02X", control_byte);
             xQueueSend(tx_queue, &control_byte, 10);
@@ -276,17 +281,19 @@ void app_main(void)
             gpio_set_level(8, gpioX_state[8]);
             gpio_set_level(9, gpioX_state[9]);
             gpio_set_level(10, gpioX_state[10]);
+            gpio_set_level(12, gpioX_state[12]);
         }
-        if (client_status==1){
+        if ((client_status==1)||(server_status==1)){
             gpio_set_level(13, true);
+            if (server_status==1){
+                gpio_set_level(13, false);
+                vTaskDelay(30);
+                gpio_set_level(13, true);
+             }
         }else{
             gpio_set_level(13, false);
         }
-        if (server_status==1){
-            gpio_set_level(12, true);
-        }else{
-            gpio_set_level(12, false);
-        }
+
         vTaskDelay(100);
     }
     
