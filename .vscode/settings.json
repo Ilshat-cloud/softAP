@@ -4,8 +4,8 @@
   "idf.toolsPathWin": "C:\\Users\\user\\.espressif",
   "idf.pythonInstallPath": "C:\\Users\\user\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
   "idf.flashType": "UART",
-  "idf.portWin": "COM9",
-  "idf.monitorPort": "COM9",
+  "idf.portWin": "COM7",
+  "idf.monitorPort": "COM7",
   "idf.openOcdConfigs": [
     "board/esp32c3-builtin.cfg"
   ],

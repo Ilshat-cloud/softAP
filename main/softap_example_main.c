@@ -101,9 +101,7 @@ void wifi_init_softap(void)
             .gtk_rekey_interval = EXAMPLE_GTK_REKEY_INTERVAL,
         },
     };
-    if (strlen(EXAMPLE_ESP_WIFI_PASS) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
-    }
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
