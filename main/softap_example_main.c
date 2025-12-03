@@ -170,6 +170,7 @@ void app_main(void)
     xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
     xTaskCreate(tcp_server_task2, "tcp_server2", 4096, NULL, 5, NULL);
     xTaskCreate(PWM_task, "pwm", 4096, NULL, 4, NULL);
+    uint8_t repeat_slave_x=0;
     while (1) {
         switch (control_byte){
         case 0:
@@ -258,7 +259,10 @@ void app_main(void)
                 }
             
         }else if ((server_status!=1)&&(client_status==1)){
-            control_byte='x';
+            if(repeat_slave_x%10==0){
+                control_byte='x';
+            }
+            repeat_slave_x++;
         }
         if(server_status<=-2){
             if (xTaskGetHandle("tcp_server2") == NULL)
