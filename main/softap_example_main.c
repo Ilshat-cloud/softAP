@@ -14,8 +14,8 @@
 #include "driver/gpio.h"
 
 static const char *TAG = "wifi_sta";
-#define WIFI_SSID       "ESP32"
-#define WIFI_PASS       ""
+#define WIFI_SSID       CONFIG_ESP_WIFI_SSID
+#define WIFI_PASS       CONFIG_ESP_WIFI_PASSWORD
 #define MAXIMUM_RETRY   5
 
 /* TCP client settings */
@@ -147,6 +147,7 @@ void app_main(void)
     gpio_set_direction(8, GPIO_MODE_OUTPUT);
     gpio_set_direction(9, GPIO_MODE_OUTPUT); 
     gpio_set_direction(10, GPIO_MODE_OUTPUT); 
+    gpio_set_direction(11, GPIO_MODE_INPUT); 
     gpio_set_direction(12, GPIO_MODE_OUTPUT); 
     memset(&gpioX_state[1],0,12);
     gpio_set_level(1, gpioX_state[1]);
