@@ -15,7 +15,7 @@
 
 static const char *TAG = "wifi_sta";
 #define WIFI_SSID       CONFIG_ESP_WIFI_SSID
-#define WIFI_PASS       CONFIG_ESP_WIFI_PASSWORD
+#define WIFI_PASS       ""
 #define MAXIMUM_RETRY   5
 
 /* TCP client settings */
