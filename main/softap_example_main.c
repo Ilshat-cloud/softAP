@@ -31,7 +31,7 @@
 #define EXAMPLE_ESP_WIFI_CHANNEL   CONFIG_ESP_WIFI_CHANNEL
 #define EXAMPLE_MAX_STA_CONN       CONFIG_ESP_MAX_STA_CONN
 #define PORT 3333               //для второй ESP ведомой
-#define PORT2 4444            //для пульта управления
+#define PORT2 4444
 #if CONFIG_ESP_GTK_REKEYING_ENABLE
 #define EXAMPLE_GTK_REKEY_INTERVAL CONFIG_ESP_GTK_REKEY_INTERVAL
 #else
