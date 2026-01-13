@@ -38,8 +38,8 @@
 #endif
 
 #define UART_NUM UART_NUM_1
-#define BUF_SIZE 4096
-#define RD_BUF_SIZE 4096
+#define BUF_SIZE 5000
+#define RD_BUF_SIZE 5000
 
 #define TXD_PIN GPIO_NUM_4
 #define RXD_PIN GPIO_NUM_5
@@ -137,8 +137,8 @@ void app_main(void)
     wifi_init_softap();
     tx_queue_tcp = xQueueCreate(4096, sizeof(uint8_t)); // очередь для байтов
     tx_queue_uart = xQueueCreate(4096, sizeof(uint8_t)); // очередь для байтов
-    xTaskCreate(tcp_server_task, "tcp_server", 10000, NULL, 5, NULL);
-    xTaskCreate(PWM_task, "pwm", 10000, NULL, 4, NULL);
+    xTaskCreate(tcp_server_task, "tcp_server", 10000, NULL, 1, NULL);
+    xTaskCreate(PWM_task, "pwm", 10000, NULL, 1, NULL);
 
     while (1) {
  
@@ -250,6 +250,7 @@ void tcp_server_task(void *pvParameters)
                 len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
                 if (len > 0) {
                     client_status=1;
+                    //xQueueReset(tx_queue_uart);
                     for (uint8_t i=0;i<len;i++){
                         xQueueSend(tx_queue_uart,&rx_buffer[i],0);
                     }
@@ -265,7 +266,7 @@ void tcp_server_task(void *pvParameters)
                     break;
                 }
 
-                while (xQueueReceive(tx_queue_tcp, &byte_to_send, 0) == pdTRUE) {
+                while (xQueueReceive(tx_queue_tcp, &byte_to_send, 2) == pdTRUE) {
                     ESP_LOGI(TAG, "ReceivedUart: %d", byte_to_send);
                     if (send(client_sock, &byte_to_send, 1, MSG_DONTWAIT) < 0) {
                         if (errno != EWOULDBLOCK && errno != EAGAIN) {
@@ -274,7 +275,7 @@ void tcp_server_task(void *pvParameters)
                         }
                     }
                 }
-                vTaskDelay(pdMS_TO_TICKS(2)); // небольшая пауза
+                //vTaskDelay(pdMS_TO_TICKS(2)); // небольшая пауза
             }
             client_status=0;
             ESP_LOGI(TAG, "Connection closed, waiting for new client...");
@@ -304,32 +305,31 @@ void PWM_task(void *pvParameters){
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM, TXD_PIN, RXD_PIN, RTS_PIN, UART_PIN_NO_CHANGE));
     
     // Установка размера буфера
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM, BUF_SIZE * 4, BUF_SIZE * 4, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_set_mode(UART_NUM, UART_MODE_RS485_HALF_DUPLEX));
 
     gpio_set_direction(RTS_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(RTS_PIN, 0);  // По умолчанию режим приема
-    
     uint8_t uart_rx_buffer[RD_BUF_SIZE];
     uint8_t queue_byte;
     
     while(1) {
         // --- 1. Чтение из очереди tx_queue_uart и отправка в UART ---
-        while (xQueueReceive(tx_queue_uart, &queue_byte, 0) == pdTRUE) {
+        while (xQueueReceive(tx_queue_uart, &queue_byte, 2) == pdTRUE) {
              // Включить передачу (DE/RE = HIGH)
             gpio_set_level(RTS_PIN, 1);  // Включить передачу
-            //ets_delay_us(2);  // Микросекундная задержка
+
             // Отправка байта в UART
             uart_write_bytes(UART_NUM, (const char*)&queue_byte, 1);
             uart_wait_tx_done(UART_NUM, pdMS_TO_TICKS(10));
-            ESP_LOGI(TAG, "ReceivedWiFi: %d", queue_byte);
-            //ets_delay_us(2);  // Микросекундная задержка
+            //ESP_LOGI(TAG, "ReceivedWiFi: %d", queue_byte);
+
 
 
         }
         gpio_set_level(RTS_PIN, 0);  // Выключить передачу
         // --- 2. Чтение из UART и отправка в очередь tx_queue_tcp ---
-        int length = uart_read_bytes(UART_NUM, uart_rx_buffer, RD_BUF_SIZE - 1, pdMS_TO_TICKS(10));
+        int length = uart_read_bytes(UART_NUM, uart_rx_buffer, RD_BUF_SIZE - 1, pdMS_TO_TICKS(50));
         
         if (length > 0) {
             for (int i = 0; i < length; i++) {
