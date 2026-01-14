@@ -137,8 +137,8 @@ void app_main(void)
     wifi_init_softap();
     tx_queue_tcp = xQueueCreate(4096, sizeof(uint8_t)); // очередь для байтов
     tx_queue_uart = xQueueCreate(4096, sizeof(uint8_t)); // очередь для байтов
-    xTaskCreate(tcp_server_task, "tcp_server", 10000, NULL, 1, NULL);
-    xTaskCreate(PWM_task, "pwm", 10000, NULL, 1, NULL);
+    xTaskCreate(tcp_server_task, "tcp_server", 15000, NULL, 1, NULL);
+    xTaskCreate(PWM_task, "pwm", 15000, NULL, 1, NULL);
 
     while (1) {
  
@@ -237,7 +237,8 @@ void tcp_server_task(void *pvParameters)
             char rx_buffer[4096];
             int len;
             uint8_t byte_to_send;
-
+            char tx_buffer[BUF_SIZE];
+            int len_tx=0;
             struct timeval timeout;
             timeout.tv_sec = 30;
             timeout.tv_usec = 0;
@@ -266,14 +267,21 @@ void tcp_server_task(void *pvParameters)
                     break;
                 }
 
-                while (xQueueReceive(tx_queue_tcp, &byte_to_send, 2) == pdTRUE) {
-                    ESP_LOGI(TAG, "ReceivedUart: %d", byte_to_send);
-                    if (send(client_sock, &byte_to_send, 1, MSG_DONTWAIT) < 0) {
+                while (xQueueReceive(tx_queue_tcp, &byte_to_send, 5) == pdTRUE) {
+                    //ESP_LOGI(TAG, "ReceivedUart: %d", byte_to_send);
+                    tx_buffer[len_tx]=byte_to_send;
+                    len_tx++;
+
+                }
+                if(len_tx>0){
+                    if (send(client_sock, tx_buffer, len_tx, MSG_DONTWAIT) < 0) {
                         if (errno != EWOULDBLOCK && errno != EAGAIN) {
                             ESP_LOGE(TAG, "send failed: errno %d", errno);
                             break;
                         }
                     }
+                    len_tx=0;
+                    ESP_LOGI(TAG, "SendWIFI pac type: %d", tx_buffer[4]);
                 }
                 //vTaskDelay(pdMS_TO_TICKS(2)); // небольшая пауза
             }
@@ -311,25 +319,34 @@ void PWM_task(void *pvParameters){
     gpio_set_direction(RTS_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(RTS_PIN, 0);  // По умолчанию режим приема
     uint8_t uart_rx_buffer[RD_BUF_SIZE];
+    uint8_t uart_tx_buffer[RD_BUF_SIZE];
     uint8_t queue_byte;
+    uint16_t len=0;
     
     while(1) {
         // --- 1. Чтение из очереди tx_queue_uart и отправка в UART ---
-        while (xQueueReceive(tx_queue_uart, &queue_byte, 2) == pdTRUE) {
+        while (xQueueReceive(tx_queue_uart, &queue_byte, 4) == pdTRUE) {
              // Включить передачу (DE/RE = HIGH)
-            gpio_set_level(RTS_PIN, 1);  // Включить передачу
+            
+            uart_tx_buffer[len]=queue_byte;
+            len++;    
 
-            // Отправка байта в UART
-            uart_write_bytes(UART_NUM, (const char*)&queue_byte, 1);
-            uart_wait_tx_done(UART_NUM, pdMS_TO_TICKS(10));
-            //ESP_LOGI(TAG, "ReceivedWiFi: %d", queue_byte);
 
 
 
         }
+        if(len!=0){
+            gpio_set_level(RTS_PIN, 1);  // Включить передачу
+            // Отправка байтов в UART
+            uart_write_bytes(UART_NUM, (const char*)&uart_tx_buffer, len);
+            uart_wait_tx_done(UART_NUM, pdMS_TO_TICKS(15));
+            //ESP_LOGI(TAG, "ReceivedWiFi: %d", queue_byte);
+            len=0;
+        }
         gpio_set_level(RTS_PIN, 0);  // Выключить передачу
+        vTaskDelay(pdMS_TO_TICKS(1)); // Небольшая пауза
         // --- 2. Чтение из UART и отправка в очередь tx_queue_tcp ---
-        int length = uart_read_bytes(UART_NUM, uart_rx_buffer, RD_BUF_SIZE - 1, pdMS_TO_TICKS(50));
+        int length = uart_read_bytes(UART_NUM, uart_rx_buffer, RD_BUF_SIZE - 1, pdMS_TO_TICKS(70));
         
         if (length > 0) {
             for (int i = 0; i < length; i++) {
@@ -337,6 +354,6 @@ void PWM_task(void *pvParameters){
             }
         }
         
-        vTaskDelay(pdMS_TO_TICKS(1)); // Небольшая пауза
+        //vTaskDelay(pdMS_TO_TICKS(1)); // Небольшая пауза
     }
 }
