@@ -169,7 +169,7 @@ void app_main(void)
     tx_queue = xQueueCreate(10, sizeof(uint8_t)); // очередь для байтов
     xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
     xTaskCreate(tcp_server_task2, "tcp_server2", 4096, NULL, 5, NULL);
-    xTaskCreate(PWM_task, "pwm", 4096, NULL, 4, NULL);
+    xTaskCreate(PWM_task, "pwm", 4096, NULL, 6, NULL);
     uint8_t repeat_slave_x=0;
     while (1) {
         switch (control_byte){
@@ -462,7 +462,7 @@ void tcp_server_task2(void *pvParameters)
             send(client_sock, rx_buffer, strlen(rx_buffer), 0); 
             sprintf(rx_buffer,"Active outputs: ");
             uint8_t len = strlen(rx_buffer);  
-            for (uint8_t i =0; i<11;i++){
+            for (uint8_t i =0; i<13;i++){
                 if (gpioX_state[i]){
                     rx_buffer[len++] = 'A' + i-1;
                 }
@@ -496,19 +496,20 @@ void handle_received_data_from_phone(const char *rx_buffer, size_t len) {
 void PWM_task(void *pvParameters){
     uint8_t loop=0,gpio_perv_state=0;
     while(1){
-        if(gpio_get_level(11)){
-            PWM_setpoint=255;
-            gpio_perv_state=1;
-        }else if (gpio_perv_state){
-            PWM_setpoint=0;
-            gpio_perv_state=0;
-        }
+        // if(gpio_get_level(11)){
+        //     PWM_setpoint=255;
+        //     gpio_perv_state=1;
+        // }else if (gpio_perv_state){
+        //     PWM_setpoint=0;
+        //     gpio_perv_state=0;
+        // }
         if(loop>PWM_setpoint){
             gpio_set_level(0, false);
         }else{
             gpio_set_level(0, true);
         }    
         loop++;
-        vTaskDelay(pdMS_TO_TICKS(50));
+        loop=(loop>250)?0:loop;
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
