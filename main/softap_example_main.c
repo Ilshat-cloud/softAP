@@ -43,6 +43,10 @@ static volatile uint8_t control_byte=0, PWM_setpoint=0;      //PWM для сид
 static int8_t client_status=0;                     //Status для воторого ESP
 static int8_t server_status=0;                     //Status для wifi AP
 static uint8_t gpioX_state[14] = {0};  // индексы 1..10 для GPIO 1..10  ебаный костыль, т.к. чтение состояния ноги не работает
+static uint8_t bitmapL_slave = 0; // для отправки на пульт
+static uint8_t bitmapH_slave = 0; // для отправки на пульт
+static uint8_t PWM_slave = 0; // для отправки на пульт
+static int client_sock_4444 = -1;
 void ctrl_byte_gpio_set(uint8_t control_byte);
 void gpio_set_zero();
 void gpio_init_();
@@ -51,6 +55,7 @@ QueueHandle_t tx_queue;
 static TaskHandle_t tcp_server_handle = NULL;
 static TaskHandle_t tcp_server2_handle = NULL;
 static TaskHandle_t PWM_task_handle = NULL;
+static TaskHandle_t status_tx_task_handle = NULL;
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
 {
@@ -68,7 +73,7 @@ void tcp_server_task(void *pvParameters);
 void tcp_server_task2(void *pvParameters); 
 void PWM_task(void *pvParameters); 
 void handle_received_data_from_phone(const char *rx_buffer, size_t len) ;
-
+void status_tx_task(void *pvParameters);
 
 void wifi_init_softap(void)
 {
@@ -122,6 +127,7 @@ void wifi_init_softap(void)
 
 void app_main(void)
 {
+    gpio_init_();   
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -129,12 +135,13 @@ void app_main(void)
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-    gpio_init_();   
+    
     wifi_init_softap();
     tx_queue = xQueueCreate(10, sizeof(uint8_t)); // очередь для байтов
     xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, &tcp_server_handle);
     xTaskCreate(tcp_server_task2, "tcp_server2", 4096, NULL, 5, &tcp_server2_handle);
     xTaskCreate(PWM_task, "pwm", 4096, NULL, 6, &PWM_task_handle);
+    xTaskCreate(status_tx_task, "status_tx", 4096, NULL, 4, &status_tx_task_handle);
     uint8_t repeat_slave_x=0;
     while (1) {
         ctrl_byte_gpio_set(control_byte);
@@ -244,12 +251,17 @@ void tcp_server_task(void *pvParameters)
             // --- 1. Прием данных от клиента ---
             len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
             if (len > 0) {
+
                 rx_buffer[len] = 0; // null terminate
                 ESP_LOGI(TAG, "Received: %s", rx_buffer);
+                if(rx_buffer[0]==0xAA){
+                    bitmapL_slave = rx_buffer[1];
+                    bitmapH_slave = rx_buffer[2];
+                    PWM_slave = rx_buffer[3];
+                }
                 // --- 2. Отправка данных из очереди ---
                 client_status=1;
-                // Эхо обратно клиенту (heartbeat)
-                send(client_sock, rx_buffer, len, 0);
+
             } else if (len == 0) {
                 client_status=-1;
                 ESP_LOGI(TAG, "Client disconnected");
@@ -324,6 +336,7 @@ void tcp_server_task2(void *pvParameters)
         }
         status_loop++;
         ESP_LOGI(TAG, "Client connected");
+        client_sock_4444 = client_sock;
         server_status=1;
         char rx_buffer[128];
         int len;
@@ -336,30 +349,61 @@ void tcp_server_task2(void *pvParameters)
             ESP_LOGI(TAG, "Received: %s", rx_buffer);
 
             handle_received_data_from_phone(rx_buffer, len);
-
-            // Эхо обратно клиенту
-            send(client_sock, rx_buffer, len, 0);
-            sprintf(rx_buffer,"Slave status: %d, GPIO_IN: %d\r\n",client_status,gpio_get_level(11));
-            send(client_sock, rx_buffer, strlen(rx_buffer), 0); 
-            sprintf(rx_buffer,"Active outputs: ");
-            uint8_t resp_len = strlen(rx_buffer);  
-            for (uint8_t i =0; i<13;i++){
-                if (gpioX_state[i]){
-                    rx_buffer[resp_len ++] = 'A' + i-1;
-                }
-            }
-            rx_buffer[resp_len++] = '\r';
-            rx_buffer[resp_len++] = '\n';
-            rx_buffer[resp_len]   = '\0';
-            send(client_sock, rx_buffer, len, 0); 
         }
         vTaskDelay(pdMS_TO_TICKS(10));
         server_status=0;
         ESP_LOGI(TAG, "Client disconnected");
+        client_sock_4444 = -1;
         close(client_sock);
     }
 }
 
+void status_tx_task(void *pvParameters)
+{
+    uint8_t packet[8];
+
+    while (1)
+    {
+        if ((server_status == 1) && (client_sock_4444 >= 0))
+        {
+            uint8_t bitmapL = 0;
+            uint8_t bitmapH = 0;
+
+            for (uint8_t i = 1; i <= 8; i++)
+            {
+                if (gpioX_state[i])
+                {
+                    bitmapL |= (1 << (i - 1));
+                }
+            }
+
+            for (uint8_t i = 9; i <= 12; i++)
+            {
+                if (gpioX_state[i])
+                {
+                    bitmapH |= (1 << (i - 9));
+                }
+            }
+            if(client_status<=0){
+                    bitmapL_slave = 0;
+                    bitmapH_slave = 0;
+                    PWM_slave = 0;
+            }
+            packet[0] = 0xAA;
+            packet[1] = bitmapL;
+            packet[2] = bitmapH;
+            packet[3] = PWM_setpoint;
+            packet[4] = bitmapL_slave;
+            packet[5] = bitmapH_slave;
+            packet[6] = PWM_slave;
+            packet[7] = packet[1] ^ packet[2] ^ packet[3];
+
+            send(client_sock_4444, packet, sizeof(packet), 0);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
 
 void handle_received_data_from_phone(const char *rx_buffer, size_t len) {
     const char prefix[] = "Ch232";
@@ -454,7 +498,24 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
        switch (control_byte){
         case 0:
             break;
-        case 10: // front minus C+D H=0
+        case 'A': // front minus E+D H=0      тоже самое что и 10 только с другой комбинацией реле, возможно не те реле включил, надо проверить
+            gpioX_state[5] = !gpioX_state[5];       //E
+            gpio_set_level(5, gpioX_state[5]);
+            gpioX_state[4] = !gpioX_state[4];       //D
+            gpio_set_level(4, gpioX_state[4]);
+            gpioX_state[8] = 0;
+            gpio_set_level(8, gpioX_state[8]);      //H
+            break;
+        case 'B': // front plus E+H D=0
+            gpioX_state[5] = !gpioX_state[5];       //E
+            gpio_set_level(5, gpioX_state[5]);
+            gpioX_state[4] = 0;
+            gpio_set_level(4, gpioX_state[4]);
+            gpioX_state[8] = !gpioX_state[8];
+            gpio_set_level(8, gpioX_state[8]);
+            break;
+
+        case 'C': // front minus C+D H=0
             gpioX_state[3] = !gpioX_state[3];       //C
             gpio_set_level(3, gpioX_state[3]);
             gpioX_state[4] = !gpioX_state[4];       //D
@@ -462,7 +523,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[8] = 0;
             gpio_set_level(8, gpioX_state[8]);      //H
             break;
-        case 11: // front plus C+H D=0
+        case 'D': // front plus C+H D=0
             gpioX_state[3] = !gpioX_state[3];
             gpio_set_level(3, gpioX_state[3]);
             gpioX_state[4] = 0;
@@ -470,7 +531,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[8] = !gpioX_state[8];
             gpio_set_level(8, gpioX_state[8]);
             break;
-        case 12: // back minus G+D H=0
+        case 'E': // back minus G+D H=0
             gpioX_state[7] = !gpioX_state[7];       //G
             gpio_set_level(7, gpioX_state[7]);
             gpioX_state[4] = !gpioX_state[4];       //D
@@ -478,7 +539,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[8] = 0;
             gpio_set_level(8, gpioX_state[8]);      //H
             break;
-        case 13: // back plus G+H D=0
+        case 'F': // back plus G+H D=0
             gpioX_state[7] = !gpioX_state[7];    //G
             gpio_set_level(7, gpioX_state[7]);
             gpioX_state[4] = 0;                  //D   
@@ -487,7 +548,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[8] = !gpioX_state[8];   //H
             gpio_set_level(8, gpioX_state[8]);
             break;
-        case 14: // headrest minus B+J A=0
+        case 'G': // headrest minus B+J A=0
             gpioX_state[1] = 0;       //A
             gpio_set_level(1, gpioX_state[1]);
             gpioX_state[2] = !gpioX_state[2];       //B
@@ -495,7 +556,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[10] = !gpioX_state[10];     //J
             gpio_set_level(10, gpioX_state[10]);
             break;    
-        case 15: // headrest plus B+A J=0
+        case 'H': // headrest plus B+A J=0
             gpioX_state[1] = !gpioX_state[1];       //A
             gpio_set_level(1, gpioX_state[1]);
             gpioX_state[2] = !gpioX_state[2];       //B
@@ -503,7 +564,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[10] = 0;
             gpio_set_level(10, gpioX_state[10]);
             break;  
-        case 16: // backrest minus F+J A=0
+        case 'I': // backrest minus F+J A=0
             gpioX_state[1] = 0;       //A
             gpio_set_level(1, gpioX_state[1]);
             gpioX_state[6] = !gpioX_state[6];
@@ -511,7 +572,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[10] = !gpioX_state[10];     //J
             gpio_set_level(10, gpioX_state[10]);
             break;  
-        case 17: // backrest plus F+A J=0
+        case 'J': // backrest plus F+A J=0
             gpioX_state[1] = !gpioX_state[1];       //A
             gpio_set_level(1, gpioX_state[1]);
             gpioX_state[6] = !gpioX_state[6];       //F
@@ -519,7 +580,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[10] = 0;                    //J
             gpio_set_level(10, gpioX_state[10]);
             break;  
-        case 18: // xx minus I+J A=0        //TODO проверить возможно не те реле включил тут 
+        case 'K': // xx minus I+J A=0        //TODO проверить возможно не те реле включил тут 
             gpioX_state[1] = 0;       //A
             gpio_set_level(1, gpioX_state[1]);
             gpioX_state[9] = !gpioX_state[9];       //I
@@ -527,7 +588,7 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[10] = !gpioX_state[10];     //J
             gpio_set_level(10, gpioX_state[10]);
             break;        
-        case 19: // xx minus I+A J=0        //TODO проверить возможно не те реле включил тут 
+        case 'L': // xx Plus I+A J=0        //TODO проверить возможно не те реле включил тут 
             gpioX_state[1] = !gpioX_state[1];       //A
             gpio_set_level(1, gpioX_state[1]);
             gpioX_state[9] = !gpioX_state[9];       //I
@@ -535,76 +596,23 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             gpioX_state[10] = 0;     //J
             gpio_set_level(10, gpioX_state[10]);
             break;
-        case 20: // all off
+        case 'M': // all off
+            PWM_setpoint=0;
             gpio_set_zero();    
             break;
-        case 'A': // GPIO1 toggle
-            gpioX_state[1] = !gpioX_state[1];
-            gpio_set_level(1, gpioX_state[1]);
-            ESP_LOGI(TAG, "GPIO 1 A toggle %d", gpioX_state[1]);
-            break;
-
-        case 'B': // GPIO2 toggle
-            gpioX_state[2] = !gpioX_state[2];
-            gpio_set_level(2, gpioX_state[2]);
-            ESP_LOGI(TAG, "GPIO 2 B toggle %d", gpioX_state[2]);
-            break;
-
-        case 'C': // GPIO3 toggle
-            gpioX_state[3] = !gpioX_state[3];
-            gpio_set_level(3, gpioX_state[3]);
-            ESP_LOGI(TAG, "GPIO 3 C toggle %d", gpioX_state[3]);
-            break;
-
-        case 'D': // GPIO4 toggle
-            gpioX_state[4] = !gpioX_state[4];
-            gpio_set_level(4, gpioX_state[4]);
-            ESP_LOGI(TAG, "GPIO 4 D toggle %d", gpioX_state[4]);
-            break;
-
-        case 'E': // GPIO5 toggle
-            gpioX_state[5] = !gpioX_state[5];
-            gpio_set_level(5, gpioX_state[5]);
-            ESP_LOGI(TAG, "GPIO 5 E toggle %d", gpioX_state[5]);
-            break;
-
-        case 'F': // GPIO6 toggle
-            gpioX_state[6] = !gpioX_state[6];
-            gpio_set_level(6, gpioX_state[6]);
-            break;
-
-        case 'G': // GPIO7 toggle
-            gpioX_state[7] = !gpioX_state[7];
-            gpio_set_level(7, gpioX_state[7]);
-            break;
-
-        case 'H': // GPIO8 toggle
-            gpioX_state[8] = !gpioX_state[8];
-            gpio_set_level(8, gpioX_state[8]);
-            break;
-
-        case 'I': // GPIO9 toggle
-            gpioX_state[9] = !gpioX_state[9];
-            gpio_set_level(9, gpioX_state[9]);
-            break;
-
-        case 'J': // GPIO10 toggle
-            gpioX_state[10] = !gpioX_state[10];
-            gpio_set_level(10, gpioX_state[10]);
-            break;
-        case 'K':
+        case 'N':
                 PWM_setpoint=0;
             break;  
-        case 'L':
+        case 'O':
                 PWM_setpoint=85;
             break;  
-        case 'M':
+        case 'P':
                 PWM_setpoint=170;
             break;  
-        case 'N':
+        case 'Q':
                 PWM_setpoint=255;
             break;  
-        case 'O': // GPIO10 toggle
+        case 'R': // GPIO10 toggle
             gpioX_state[12] = !gpioX_state[12];
             gpio_set_level(12, gpioX_state[12]);
             break;
@@ -613,4 +621,5 @@ void ctrl_byte_gpio_set(uint8_t control_byte){
             xQueueSend(tx_queue, &control_byte, 10);
             break;
         }
+        
 }
