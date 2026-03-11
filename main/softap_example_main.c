@@ -31,8 +31,13 @@ static uint8_t control_byte=0, PWM_setpoint=0;      //PWM для сидух 0-25
 static int s_retry_num = 0;
 static EventGroupHandle_t s_wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
+static TaskHandle_t tcp_client_handle = NULL;
+
 static void tcp_client_task(void *pvParameters);
 void PWM_task(void *pvParameters); 
+void ctrl_byte_gpio_set(uint8_t control_byte);
+void gpio_set_zero();
+void gpio_init_();
 /* Обработчик событий WiFi / IP */
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data)
@@ -96,8 +101,7 @@ void wifi_init_sta(void)
         .sta = {
             .ssid = WIFI_SSID,
             .password = WIFI_PASS,
-            .threshold.authmode = WIFI_AUTH_OPEN,
-            //.threshold.authmode = WIFI_AUTH_WPA2_PSK,     //TODO Убрать если нужен пароль
+            .threshold.authmode = WIFI_AUTH_OPEN,  
             .pmf_cfg = {
                 .capable = true,
                 .required = false
@@ -116,75 +120,22 @@ void wifi_init_sta(void)
 /* Пример app_main, ждём подключения, затем выполняем дальнейшие действия */
 void app_main(void)
 {
+    gpio_init_();  
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-    gpio_reset_pin(0);
-    gpio_reset_pin(1);
-    gpio_reset_pin(2);
-    gpio_reset_pin(3);
-    gpio_reset_pin(4);
-    gpio_reset_pin(5);
-    gpio_reset_pin(6);
-    gpio_reset_pin(7);    
-    gpio_reset_pin(8);
-    gpio_reset_pin(9);
-    gpio_reset_pin(10);    
-    gpio_reset_pin(12);    
-    /* Set the GPIO as a push/pull output */
-    gpio_set_direction(13, GPIO_MODE_OUTPUT);
-    gpio_set_direction(12, GPIO_MODE_OUTPUT);
-    gpio_set_direction(0, GPIO_MODE_OUTPUT);
-    gpio_set_direction(1, GPIO_MODE_OUTPUT);
-    gpio_set_direction(2, GPIO_MODE_OUTPUT);
-    gpio_set_direction(3, GPIO_MODE_OUTPUT);
-    gpio_set_direction(4, GPIO_MODE_OUTPUT);
-    gpio_set_direction(5, GPIO_MODE_OUTPUT);    
-    gpio_set_direction(6, GPIO_MODE_OUTPUT);
-    gpio_set_direction(7, GPIO_MODE_OUTPUT);
-    gpio_set_direction(8, GPIO_MODE_OUTPUT);
-    gpio_set_direction(9, GPIO_MODE_OUTPUT); 
-    gpio_set_direction(10, GPIO_MODE_OUTPUT); 
-    gpio_set_direction(11, GPIO_MODE_INPUT); 
-    gpio_set_direction(12, GPIO_MODE_OUTPUT); 
-    memset(&gpioX_state[1],0,12);
-    gpio_set_level(1, gpioX_state[1]);
-    gpio_set_level(2, gpioX_state[2]);
-    gpio_set_level(3, gpioX_state[3]);
-    gpio_set_level(4, gpioX_state[4]);
-    gpio_set_level(5, gpioX_state[5]);
-    gpio_set_level(6, gpioX_state[6]);
-    gpio_set_level(7, gpioX_state[7]);
-    gpio_set_level(8, gpioX_state[8]);
-    gpio_set_level(9, gpioX_state[9]);
-    gpio_set_level(10, gpioX_state[10]);
-    gpio_set_level(12, gpioX_state[12]);
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
+
     wifi_init_sta();
-    // Ждём подключения (по событию) и затем стартуем TCP клиент как таск.
-    // Можно запускать сразу — в клиенте стоит waitBits.
-    xTaskCreate(tcp_client_task, "tcp_client", 4096, NULL, 5, NULL);
-    // // Ждём подключения (с тайм-аутом можно вариативно)  просто подключался с этим
-    // EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-    //                                        WIFI_CONNECTED_BIT,
-    //                                        pdFALSE,
-    //                                        pdFALSE,
-    //                                        pdMS_TO_TICKS(15000)); // ждём 15 сек
 
-    // if (bits & WIFI_CONNECTED_BIT) {
-    //     ESP_LOGI(TAG, "Connected to AP, now can start other tasks (e.g. TCP client/server)");
-    //     // TODO: создать задачи/инициализировать клиент/сервер
-    // } else {
-    //     ESP_LOGW(TAG, "Failed to connect to SSID:%s", WIFI_SSID);
-    //     // можно пробовать повторно или fallback
-    // }
+    xTaskCreate(tcp_client_task, "tcp_client", 4096, NULL, 5, &tcp_client_handle);
 
-    // пример: оставляем таск живым (или можно запускать своё приложение)
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        ctrl_byte_gpio_set(control_byte);
+        control_byte=0;
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -236,25 +187,10 @@ static void tcp_client_task(void *pvParameters)
 
         ESP_LOGI(TAG, "Successfully connected");
         server_status=1;
-        // Пример: при подключении отправляем идентификацию
-        const char *hello = "ESP32 client connected\n";
-        send(sock, hello, strlen(hello), 0);
 
         // Основной цикл обмена: читаем и отправляем данные
         while (1) {
             // Чтение от сервера
-            sprintf(tx_buffer,"Active outputs: ");
-            uint8_t len2 = strlen(tx_buffer);  
-            for (uint8_t i =0; i<sizeof(gpioX_state);i++){
-                if (gpioX_state[i]){
-                    tx_buffer[len2++] = 'a' + i-1;
-                }
-            }
-            tx_buffer[len2++] = '\r';
-            tx_buffer[len2++] = '\n';
-            tx_buffer[len2]   = '\0';
-            send(sock, tx_buffer, strlen(tx_buffer), 0); 
-
             int len = recv(sock, rx_buffer, sizeof(rx_buffer)-1, 0);
             if (len > 0) {
                 rx_buffer[len] = 0;
@@ -268,8 +204,36 @@ static void tcp_client_task(void *pvParameters)
                 // errno может быть EWOULDBLOCK/EAGAIN если таймаут
                 if (errno == EWOULDBLOCK || errno == EAGAIN) {
                     // ничего не пришло в таймаут - можно послать heartbeat
-                    const char hb[] = "HB\n";
-                    send(sock, hb, sizeof(hb)-1, 0);
+                    static uint8_t loop_status=0;
+                    if (loop_status>5){
+                        loop_status=0;
+                        
+                        uint8_t bitmapL = 0;
+                        uint8_t bitmapH = 0;
+
+                        for (uint8_t i = 1; i <= 8; i++)
+                        {
+                            if (gpioX_state[i])
+                            {
+                                bitmapL |= (1 << (i - 1));
+                            }
+                        }
+
+                        for (uint8_t i = 9; i <= 12; i++)
+                        {
+                            if (gpioX_state[i])
+                            {
+                                bitmapH |= (1 << (i - 9));
+                            }
+                        }   
+                        
+                        tx_buffer[0]=0xAA;
+                        tx_buffer[1]=bitmapL;
+                        tx_buffer[2]=bitmapH;
+                        tx_buffer[3]=PWM_setpoint;
+                        send(sock, tx_buffer, sizeof(tx_buffer), 0);
+                    }
+                    loop_status++;
                     vTaskDelay(pdMS_TO_TICKS(100));
                     continue;
                 }
@@ -279,7 +243,6 @@ static void tcp_client_task(void *pvParameters)
             }
             vTaskDelay(pdMS_TO_TICKS(100));
         }
-        control_byte='x';
         // Закрываем и переподключаемся
         if (sock != -1) {
             server_status=0;
@@ -298,109 +261,11 @@ void PWM_task(void *pvParameters){
     uint8_t loop=0;
     int8_t gpio_perv_state=0;
     while(1){
-        switch (control_byte){
-        case 'a': // GPIO1 toggle
-            gpioX_state[1] = !gpioX_state[1];
-            gpio_set_level(1, gpioX_state[1]);
-            ESP_LOGI(TAG, "GPIO 1 A toggle %d", gpioX_state[1]);
-            break;
-
-        case 'b': // GPIO2 toggle
-            gpioX_state[2] = !gpioX_state[2];
-            gpio_set_level(2, gpioX_state[2]);
-            ESP_LOGI(TAG, "GPIO 2 B toggle %d", gpioX_state[2]);
-            break;
-
-        case 'c': // GPIO3 toggle
-            gpioX_state[3] = !gpioX_state[3];
-            gpio_set_level(3, gpioX_state[3]);
-            ESP_LOGI(TAG, "GPIO 3 C toggle %d", gpioX_state[3]);
-            break;
-
-        case 'd': // GPIO4 toggle
-            gpioX_state[4] = !gpioX_state[4];
-            gpio_set_level(4, gpioX_state[4]);
-            ESP_LOGI(TAG, "GPIO 4 D toggle %d", gpioX_state[4]);
-            break;
-
-        case 'e': // GPIO5 toggle
-            gpioX_state[5] = !gpioX_state[5];
-            gpio_set_level(5, gpioX_state[5]);
-            ESP_LOGI(TAG, "GPIO 5 E toggle %d", gpioX_state[5]);
-            break;
-
-        case 'f': // GPIO6 toggle
-            gpioX_state[6] = !gpioX_state[6];
-            gpio_set_level(6, gpioX_state[6]);
-            break;
-
-        case 'g': // GPIO7 toggle
-            gpioX_state[7] = !gpioX_state[7];
-            gpio_set_level(7, gpioX_state[7]);
-            break;
-
-        case 'h': // GPIO8 toggle
-            gpioX_state[8] = !gpioX_state[8];
-            gpio_set_level(8, gpioX_state[8]);
-            break;
-
-        case 'i': // GPIO9 toggle
-            gpioX_state[9] = !gpioX_state[9];
-            gpio_set_level(9, gpioX_state[9]);
-            break;
-
-        case 'j': // GPIO10 toggle
-            gpioX_state[10] = !gpioX_state[10];
-            gpio_set_level(10, gpioX_state[10]);
-            break;
-        case 'k':
-                PWM_setpoint=0;
-            break;  
-        case 'o':
-                PWM_setpoint=85;
-            break;  
-        case 'm':
-                PWM_setpoint=170;
-            break;  
-        case 'n':
-                PWM_setpoint=255;
-            break;  
-        case 'l': // GPIO10 toggle
-            gpioX_state[12] = !gpioX_state[12];
-            gpio_set_level(12, gpioX_state[12]);
-            break;
-        case 'x':
-            memset(&gpioX_state[1],0,10);
-            gpio_set_level(1, gpioX_state[1]);
-            gpio_set_level(2, gpioX_state[2]);
-            gpio_set_level(3, gpioX_state[3]);
-            gpio_set_level(4, gpioX_state[4]);
-            gpio_set_level(5, gpioX_state[5]);
-            gpio_set_level(6, gpioX_state[6]);
-            gpio_set_level(7, gpioX_state[7]);
-            gpio_set_level(8, gpioX_state[8]);
-            gpio_set_level(9, gpioX_state[9]);
-            gpio_set_level(10, gpioX_state[10]);  
-            gpio_set_level(12, gpioX_state[12]);  
-            break;             
-        default:
-
-            break;
-        }
-        control_byte=0;
 
         if(server_status){
             gpio_set_level(13, true);  
         }else{
             gpio_set_level(13, false);  
-        }
-
-        if(gpio_get_level(11)){
-            PWM_setpoint=255;
-            gpio_perv_state=1;
-        }else if (gpio_perv_state){
-            PWM_setpoint=0;
-            gpio_perv_state=0;
         }
         if(loop>PWM_setpoint){
             gpio_set_level(0, false);
@@ -408,6 +273,201 @@ void PWM_task(void *pvParameters){
             gpio_set_level(0, true);
         }    
         loop++;
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+
+
+
+
+
+void gpio_init_(){
+    gpio_reset_pin(13);
+    gpio_reset_pin(12);
+
+    gpio_reset_pin(0);
+    gpio_reset_pin(1);
+    gpio_reset_pin(2);
+    gpio_reset_pin(3);
+    gpio_reset_pin(4);
+    gpio_reset_pin(5);
+    gpio_reset_pin(6);
+    gpio_reset_pin(7);    
+    gpio_reset_pin(8);
+    gpio_reset_pin(9);
+    gpio_reset_pin(10);  
+    gpio_reset_pin(11);  
+    /* Set the GPIO as a push/pull output */
+    gpio_set_direction(13, GPIO_MODE_OUTPUT);
+    gpio_set_direction(12, GPIO_MODE_OUTPUT);  //светодиод и выход 
+    gpio_set_direction(0, GPIO_MODE_OUTPUT);
+    gpio_set_direction(1, GPIO_MODE_OUTPUT);
+    gpio_set_direction(2, GPIO_MODE_OUTPUT);
+    gpio_set_direction(3, GPIO_MODE_OUTPUT);
+    gpio_set_direction(4, GPIO_MODE_OUTPUT);
+    gpio_set_direction(5, GPIO_MODE_OUTPUT);    
+    gpio_set_direction(6, GPIO_MODE_OUTPUT);
+    gpio_set_direction(7, GPIO_MODE_OUTPUT);
+    gpio_set_direction(8, GPIO_MODE_OUTPUT);
+    gpio_set_direction(9, GPIO_MODE_OUTPUT); 
+    gpio_set_direction(10, GPIO_MODE_OUTPUT); 
+    gpio_set_direction(11, GPIO_MODE_INPUT); 
+    memset(&gpioX_state[1],0,11);
+    gpio_set_level(1, gpioX_state[1]);
+    gpio_set_level(2, gpioX_state[2]);
+    gpio_set_level(3, gpioX_state[3]);
+    gpio_set_level(4, gpioX_state[4]);
+    gpio_set_level(5, gpioX_state[5]);
+    gpio_set_level(6, gpioX_state[6]);
+    gpio_set_level(7, gpioX_state[7]);
+    gpio_set_level(8, gpioX_state[8]);
+    gpio_set_level(9, gpioX_state[9]);
+    gpio_set_level(10, gpioX_state[10]);
+    gpio_set_level(12, gpioX_state[12]);
+}
+
+void gpio_set_zero(){
+    memset(&gpioX_state[1],0,11);
+    gpio_set_level(1, gpioX_state[1]);
+    gpio_set_level(2, gpioX_state[2]);
+    gpio_set_level(3, gpioX_state[3]);
+    gpio_set_level(4, gpioX_state[4]);
+    gpio_set_level(5, gpioX_state[5]);
+    gpio_set_level(6, gpioX_state[6]);
+    gpio_set_level(7, gpioX_state[7]);
+    gpio_set_level(8, gpioX_state[8]);
+    gpio_set_level(9, gpioX_state[9]);
+    gpio_set_level(10, gpioX_state[10]);
+    gpio_set_level(12, gpioX_state[12]);
+}
+
+//функция для обработки байта управления, который может прийти от пульта, в зависимости от значения байта выполняются разные действия, например включение определенных GPIO или отправка байта в очередь для второго ESP
+void ctrl_byte_gpio_set(uint8_t control_byte){
+       switch (control_byte){
+        case 0:
+            break;
+        case 'a': // front minus E+D H=0      тоже самое что и 10 только с другой комбинацией реле, возможно не те реле включил, надо проверить
+            gpioX_state[5] = !gpioX_state[5];       //E
+            gpio_set_level(5, gpioX_state[5]);
+            gpioX_state[4] = !gpioX_state[4];       //D
+            gpio_set_level(4, gpioX_state[4]);
+            gpioX_state[8] = 0;
+            gpio_set_level(8, gpioX_state[8]);      //H
+            break;
+        case 'b': // front plus E+H D=0
+            gpioX_state[5] = !gpioX_state[5];       //E
+            gpio_set_level(5, gpioX_state[5]);
+            gpioX_state[4] = 0;
+            gpio_set_level(4, gpioX_state[4]);
+            gpioX_state[8] = !gpioX_state[8];
+            gpio_set_level(8, gpioX_state[8]);
+            break;
+
+        case 'c': // front minus C+D H=0
+            gpioX_state[3] = !gpioX_state[3];       //C
+            gpio_set_level(3, gpioX_state[3]);
+            gpioX_state[4] = !gpioX_state[4];       //D
+            gpio_set_level(4, gpioX_state[4]);
+            gpioX_state[8] = 0;
+            gpio_set_level(8, gpioX_state[8]);      //H
+            break;
+        case 'd': // front plus C+H D=0
+            gpioX_state[3] = !gpioX_state[3];
+            gpio_set_level(3, gpioX_state[3]);
+            gpioX_state[4] = 0;
+            gpio_set_level(4, gpioX_state[4]);
+            gpioX_state[8] = !gpioX_state[8];
+            gpio_set_level(8, gpioX_state[8]);
+            break;
+        case 'e': // back minus G+D H=0
+            gpioX_state[7] = !gpioX_state[7];       //G
+            gpio_set_level(7, gpioX_state[7]);
+            gpioX_state[4] = !gpioX_state[4];       //D
+            gpio_set_level(4, gpioX_state[4]);
+            gpioX_state[8] = 0;
+            gpio_set_level(8, gpioX_state[8]);      //H
+            break;
+        case 'f': // back plus G+H D=0
+            gpioX_state[7] = !gpioX_state[7];    //G
+            gpio_set_level(7, gpioX_state[7]);
+            gpioX_state[4] = 0;                  //D   
+            gpio_set_level(4, gpioX_state[4]);         
+
+            gpioX_state[8] = !gpioX_state[8];   //H
+            gpio_set_level(8, gpioX_state[8]);
+            break;
+        case 'g': // headrest minus B+J A=0
+            gpioX_state[1] = 0;       //A
+            gpio_set_level(1, gpioX_state[1]);
+            gpioX_state[2] = !gpioX_state[2];       //B
+            gpio_set_level(2, gpioX_state[2]);
+            gpioX_state[10] = !gpioX_state[10];     //J
+            gpio_set_level(10, gpioX_state[10]);
+            break;    
+        case 'h': // headrest plus B+A J=0
+            gpioX_state[1] = !gpioX_state[1];       //A
+            gpio_set_level(1, gpioX_state[1]);
+            gpioX_state[2] = !gpioX_state[2];       //B
+            gpio_set_level(2, gpioX_state[2]);
+            gpioX_state[10] = 0;
+            gpio_set_level(10, gpioX_state[10]);
+            break;  
+        case 'i': // backrest minus F+J A=0
+            gpioX_state[1] = 0;       //A
+            gpio_set_level(1, gpioX_state[1]);
+            gpioX_state[6] = !gpioX_state[6];
+            gpio_set_level(6, gpioX_state[6]);
+            gpioX_state[10] = !gpioX_state[10];     //J
+            gpio_set_level(10, gpioX_state[10]);
+            break;  
+        case 'j': // backrest plus F+A J=0
+            gpioX_state[1] = !gpioX_state[1];       //A
+            gpio_set_level(1, gpioX_state[1]);
+            gpioX_state[6] = !gpioX_state[6];       //F
+            gpio_set_level(6, gpioX_state[6]);
+            gpioX_state[10] = 0;                    //J
+            gpio_set_level(10, gpioX_state[10]);
+            break;  
+        case 'k': // xx minus I+J A=0        //наклон задний
+            gpioX_state[1] = 0;       //A
+            gpio_set_level(1, gpioX_state[1]);
+            gpioX_state[9] = !gpioX_state[9];       //I
+            gpio_set_level(9, gpioX_state[9]);
+            gpioX_state[10] = !gpioX_state[10];     //J
+            gpio_set_level(10, gpioX_state[10]);
+            break;        
+        case 'l': // xx Plus I+A J=0        //наклон задний 
+            gpioX_state[1] = !gpioX_state[1];       //A
+            gpio_set_level(1, gpioX_state[1]);
+            gpioX_state[9] = !gpioX_state[9];       //I
+            gpio_set_level(9, gpioX_state[9]);
+            gpioX_state[10] = 0;     //J
+            gpio_set_level(10, gpioX_state[10]);
+            break;
+        case 'm': // all off
+            PWM_setpoint=0;
+            gpio_set_zero();    
+            break;
+        case 'n':
+                PWM_setpoint=0;
+            break;  
+        case 'o':
+                PWM_setpoint=85;
+            break;  
+        case 'p':
+                PWM_setpoint=170;
+            break;  
+        case 'q':
+                PWM_setpoint=255;
+            break;  
+        case 'r': // GPIO10 toggle
+            gpioX_state[12] = !gpioX_state[12];
+            gpio_set_level(12, gpioX_state[12]);
+            break;
+        default:
+            gpio_set_zero();
+            break;
+        }
+        
 }
