@@ -112,7 +112,7 @@ void wifi_init_softap(void)
                 .protected_keep_alive = 1,
             },
 #endif
-            .gtk_rekey_interval = EXAMPLE_GTK_REKEY_INTERVAL,
+            
         },
     };
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
@@ -385,9 +385,9 @@ void status_tx_task(void *pvParameters)
                 }
             }
             if(client_status<=0){
-                    bitmapL_slave = 0;
-                    bitmapH_slave = 0;
-                    PWM_slave = 0;
+                    bitmapL_slave = 0xFF;
+                    bitmapH_slave = 0xFF;
+                    PWM_slave = 0xFF;
             }
             packet[0] = 0xAA;
             packet[1] = bitmapL;
@@ -396,7 +396,7 @@ void status_tx_task(void *pvParameters)
             packet[4] = bitmapL_slave;
             packet[5] = bitmapH_slave;
             packet[6] = PWM_slave;
-            packet[7] = packet[1] ^ packet[2] ^ packet[3];
+            packet[7] = packet[1] ^ packet[2] ^ packet[3]^ packet[4]^ packet[5]^ packet[6];
 
             send(client_sock_4444, packet, sizeof(packet), 0);
         }
