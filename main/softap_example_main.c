@@ -112,7 +112,7 @@ void wifi_init_softap(void)
                 .protected_keep_alive = 1,
             },
 #endif
-            .gtk_rekey_interval = EXAMPLE_GTK_REKEY_INTERVAL,
+            
         },
     };
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
