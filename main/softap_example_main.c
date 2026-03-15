@@ -131,12 +131,9 @@ void app_main(void)
     wifi_init_sta();
 
     xTaskCreate(tcp_client_task, "tcp_client", 4096, NULL, 5, &tcp_client_handle);
+    xTaskCreate(PWM_task, "pwm_task", 2048, NULL, 5, NULL);   // ← запускаем ШИМ
+    vTaskDelete(NULL); 
 
-    while (1) {
-        ctrl_byte_gpio_set(control_byte);
-        control_byte=0;
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
 }
 
 
@@ -171,8 +168,8 @@ static void tcp_client_task(void *pvParameters)
 
         // По желанию: таймауты подключения/приема
         struct timeval tv;
-        tv.tv_sec = 20;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         control_byte='x';
@@ -196,52 +193,48 @@ static void tcp_client_task(void *pvParameters)
                 rx_buffer[len] = 0;
                 ESP_LOGI(TAG, "Received from server: %s", rx_buffer);
                 control_byte=rx_buffer[len-1];                // тут беерм последний байт который пришел, ответ приходит сразу как закинем запрос
-                
+                ctrl_byte_gpio_set(control_byte);
+                control_byte='x';
             } else if (len == 0) {
                 ESP_LOGW(TAG, "Connection closed by server");
+                gpio_set_zero();
                 break;
             } else {
                 // errno может быть EWOULDBLOCK/EAGAIN если таймаут
                 if (errno == EWOULDBLOCK || errno == EAGAIN) {
                     // ничего не пришло в таймаут - можно послать heartbeat
-                    static uint8_t loop_status=0;
-                    if (loop_status>5){
-                        loop_status=0;
                         
-                        uint8_t bitmapL = 0;
-                        uint8_t bitmapH = 0;
+                    uint8_t bitmapL = 0;
+                    uint8_t bitmapH = 0;
 
-                        for (uint8_t i = 1; i <= 8; i++)
+                    for (uint8_t i = 1; i <= 8; i++)
+                    {
+                        if (gpioX_state[i])
                         {
-                            if (gpioX_state[i])
-                            {
-                                bitmapL |= (1 << (i - 1));
-                            }
+                            bitmapL |= (1 << (i - 1));
                         }
-
-                        for (uint8_t i = 9; i <= 12; i++)
-                        {
-                            if (gpioX_state[i])
-                            {
-                                bitmapH |= (1 << (i - 9));
-                            }
-                        }   
-                        
-                        tx_buffer[0]=0xAA;
-                        tx_buffer[1]=bitmapL;
-                        tx_buffer[2]=bitmapH;
-                        tx_buffer[3]=PWM_setpoint;
-                        send(sock, tx_buffer, sizeof(tx_buffer), 0);
                     }
-                    loop_status++;
-                    vTaskDelay(pdMS_TO_TICKS(100));
+
+                    for (uint8_t i = 9; i <= 12; i++)
+                    {
+                        if (gpioX_state[i])
+                        {
+                            bitmapH |= (1 << (i - 9));
+                        }
+                    }   
+                    
+                    tx_buffer[0]=0xAA;
+                    tx_buffer[1]=bitmapL;
+                    tx_buffer[2]=bitmapH;
+                    tx_buffer[3]=PWM_setpoint;
+                    send(sock, tx_buffer, sizeof(tx_buffer), 0);
+                    //vTaskDelay(pdMS_TO_TICKS(100));
                     continue;
                 }
                 ESP_LOGE(TAG, "recv failed: errno %d", errno);
                 break;
-                vTaskDelay(pdMS_TO_TICKS(100));
             }
-            vTaskDelay(pdMS_TO_TICKS(100));
+            //vTaskDelay(pdMS_TO_TICKS(100));
         }
         // Закрываем и переподключаемся
         if (sock != -1) {
