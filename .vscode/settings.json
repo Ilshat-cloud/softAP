@@ -4,8 +4,8 @@
   "idf.toolsPathWin": "C:\\Users\\user\\.espressif",
   "idf.pythonInstallPath": "C:\\Users\\user\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
   "idf.flashType": "UART",
-  "idf.portWin": "COM12",
-  "idf.monitorPort": "COM12",
+  "idf.portWin": "COM9",
+  "idf.monitorPort": "COM9",
   "idf.openOcdConfigs": [
     "board/esp32c3-builtin.cfg"
   ],
@@ -23,5 +23,6 @@
     "--background-index",
     "--query-driver=C:\\Users\\user\\.espressif\\tools\\riscv32-esp-elf\\esp-14.2.0_20241119\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
     "--compile-commands-dir=c:\\Users\\user\\OneDrive\\documents\\esp32\\WIFI_AP\\softAP\\build"
-  ]
+  ],
+  "idf.currentSetup": "c:\\ESP32\\v5.5.1\\esp-idf"
 }
